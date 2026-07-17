@@ -1,0 +1,79 @@
+# Maestro 示例工作流 — 软件功能开发
+#
+# 说明：一个完整的功能开发流水线。
+# 需求进来 → 研究员(Grok)搜参考资料 → 设计师(Claude)出方案 → 编码员(Codex)写代码 → 审查员(Gemini)审查
+#
+# 运行前设置环境变量:
+#   CLAUDE_API_KEY=sk-ant-xxx
+#   OPENAI_API_KEY=sk-xxx (Codex/GPT)
+#   GEMINI_API_KEY=xxx
+#   GROK_API_KEY=xxx
+
+name: "功能开发流水线"
+description: "一个完整的功能开发流程：研究 → 设计 → 编码 → 审查"
+maxGlobalRetries: 1
+
+steps:
+  # === Step 1: 研究员搜索一手资料 ===
+  - name: research
+    agent: researcher
+    prompt: >
+      用户需求：{{ request }}
+
+      请搜索以下信息：
+      1. 这个需求业界的最佳实践和参考实现
+      2. 相关的技术文档和 API 参考
+      3. 已知的坑和注意事项
+
+      基于搜索结果列出关键发现。
+
+  # === Step 2: 设计师出架构方案 ===
+  - name: design
+    agent: designer
+    inputs: [research]
+    prompt: >
+      用户需求：{{ request }}
+
+      参考信息：
+      {{ research }}
+
+      请输出技术设计方案，包括：
+      1. 系统架构图（ASCII）
+      2. 模块划分和职责
+      3. 接口定义
+      4. 数据流
+      5. 关键技术决策和理由
+
+  # === Step 3: 编码员实现 ===
+  - name: code
+    agent: coder
+    inputs: [design]
+    prompt: >
+      根据以下设计文档实现代码：
+
+      设计文档：
+      {{ design }}
+
+      要求：
+      1. 完整可运行
+      2. 包含错误处理
+      3. 遵循 SOLID 原则
+      4. 写注释
+
+  # === Step 4: 审查员审查 ===
+  - name: review
+    agent: reviewer
+    inputs: [code, design]
+    prompt: >
+      审查以下代码：
+
+      设计文档：{{ design }}
+
+      代码实现：{{ code }}
+
+      请从以下维度审查：
+      1. 是否与设计一致
+      2. 逻辑正确性
+      3. 安全漏洞
+      4. 代码质量问题
+      5. 性能问题

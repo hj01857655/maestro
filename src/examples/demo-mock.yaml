@@ -1,0 +1,54 @@
+# Maestro 演示工作流 — Mock 模式运行
+#
+# 不需要任何 API Key，直接用 MockProvider 模拟所有模型。
+# 运行方式：
+#   bun src/index.ts run src/examples/demo-mock.yaml --mock
+
+name: "演示工作流（Mock 模式）"
+description: "不需要 API Key 就能跑通的全流程演示"
+
+steps:
+  # Step 1: 研究员搜索
+  - name: research
+    agent: researcher
+    prompt: >
+      用户需求：{{ request }}
+
+      请搜索"多模型 Agent 编排平台"的行业最佳实践，
+      列出关键参考架构和设计模式。
+
+  # Step 2: 设计师出方案
+  - name: design
+    agent: designer
+    inputs: [research]
+    prompt: >
+      用户需求：{{ request }}
+
+      参考信息：
+      {{ research }}
+
+      请设计一个多模型 Agent 编排平台的系统架构，
+      包括模块划分和交互流程。
+
+  # Step 3: 编码员实现
+  - name: code
+    agent: coder
+    inputs: [design]
+    prompt: >
+      根据以下设计文档实现核心代码：
+
+      设计文档：
+      {{ design }}
+
+      请实现 Orchestrator 的核心调度逻辑。
+
+  # Step 4: 审查员审查
+  - name: review
+    agent: reviewer
+    inputs: [code]
+    prompt: >
+      审查以下代码实现：
+
+      {{ code }}
+
+      从安全性、正确性、性能三个维度给出审查意见。

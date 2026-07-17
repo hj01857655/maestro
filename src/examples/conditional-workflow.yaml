@@ -1,0 +1,54 @@
+# Maestro 示例工作流 — 带条件分支与产物落盘
+#
+# research → (若包含 "risk" 则) risk_review
+#          → design → code → review
+#
+# 运行:
+#   bun src/index.ts run src/examples/conditional-workflow.yaml --mock
+
+name: "条件分支示例"
+description: "演示 conditions.when 跳过与 outputDir 产物"
+maxGlobalRetries: 0
+outputDir: ".maestro/runs"
+
+steps:
+  - name: research
+    agent: researcher
+    prompt: >
+      用户需求：{{ request }}
+      请搜索相关风险与最佳实践。若发现明显风险，在结论中包含单词 risk。
+
+  - name: risk_review
+    agent: reviewer
+    inputs: [research]
+    conditions:
+      - sourceStep: research
+        when: "contains:risk"
+    prompt: >
+      针对以下研究结论做风险专项审查：
+      {{ research }}
+
+  - name: design
+    agent: designer
+    inputs: [research]
+    prompt: >
+      基于研究结论设计方案：
+      {{ research }}
+
+  - name: code
+    agent: coder
+    inputs: [design]
+    maxRetries: 1
+    prompt: >
+      按设计实现代码：
+      {{ design }}
+
+      请用 markdown 代码块输出，第一行注释写文件名。
+
+  - name: review
+    agent: reviewer
+    inputs: [code, design]
+    prompt: >
+      审查代码是否符合设计。
+      设计：{{ design }}
+      代码：{{ code }}

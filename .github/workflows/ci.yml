@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install
+        run: bun install --frozen-lockfile || bun install
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        run: bun test
+
+      - name: Validate examples
+        run: |
+          bun src/index.ts validate src/examples/demo-mock.yaml
+          bun src/index.ts validate src/examples/dev-workflow.yaml
+          bun src/index.ts validate src/examples/conditional-workflow.yaml
+
+      - name: Mock plan smoke
+        run: bun src/index.ts plan "ci smoke" --run --mock --no-research
