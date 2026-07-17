@@ -6,6 +6,7 @@
  * 2. 模型生成 YAML/JSON（可选 Agent）
  */
 
+import { parse as parseYaml } from "yaml";
 import type { AgentConfig, StepConfig, WorkflowConfig } from "../types";
 import { validateWorkflowConfig } from "./validate";
 import type { Agent } from "./agent";
@@ -106,8 +107,16 @@ export function parseWorkflowFromModel(text: string): WorkflowConfig | null {
     // fallthrough
   }
 
-  // YAML via dynamic import would be heavy; try minimal line-based? Use JSON only for model path.
-  // Caller can pass yaml through validate after external parse.
+  // 尝试 YAML（模型可能输出 yaml 而非 json）
+  try {
+    const obj = parseYaml(body);
+    if (obj && typeof obj === "object") {
+      const v = validateWorkflowConfig(obj);
+      if (v.ok && v.config) return v.config;
+    }
+  } catch {
+    // ignore
+  }
   return null;
 }
 

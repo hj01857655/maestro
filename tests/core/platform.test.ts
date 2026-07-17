@@ -211,6 +211,79 @@ describe("stream providers", () => {
     for await (const chunk of stream) acc += chunk;
     expect(acc).toContain("Mock");
   });
+
+  it("Agent stream 触发 onStream", async () => {
+    const { MockProvider } = await import("../../src/testing/MockProvider");
+    const { Agent } = await import("../../src/core/agent");
+    const provider = new MockProvider({ model: "s" }, { delayMs: 0 });
+    const agent = new Agent(
+      {
+        name: "designer",
+        role: "designer",
+        provider: "claude",
+        model: "s",
+        systemPrompt: "sys",
+        enableTools: false,
+      },
+      provider,
+    );
+    const chunks: string[] = [];
+    const result = await agent.run([{ role: "user", content: "hi" }], {
+      stream: true,
+      onStream: (d) => chunks.push(d),
+    });
+    expect(result.content.length).toBeGreaterThan(0);
+    expect(chunks.length).toBeGreaterThan(0);
+    expect(chunks.join("")).toBe(result.content);
+  });
+
+  it("Orchestrator 发出 step:stream", async () => {
+    const { Orchestrator } = await import("../../src/core/orchestrator");
+    const { Workflow } = await import("../../src/core/workflow");
+    const { MockProvider } = await import("../../src/testing/MockProvider");
+    const events: string[] = [];
+    const orch = new Orchestrator({
+      maxGlobalRetries: 0,
+      stream: true,
+      onEvent: (e) => {
+        if (e.type === "step:stream") events.push(e.delta);
+      },
+    });
+    orch.registerProvider(
+      "claude",
+      new MockProvider({ model: "m" }, { delayMs: 0 }),
+    );
+    orch.registerAgent({
+      name: "designer",
+      role: "designer",
+      provider: "claude",
+      model: "m",
+      systemPrompt: "s",
+      enableTools: false,
+    });
+    const wf = new Workflow({
+      name: "stream-test",
+      steps: [{ name: "design", agent: "designer", prompt: "设计" }],
+    });
+    const result = await orch.run(wf);
+    expect(result.status).toBe("completed");
+    expect(events.length).toBeGreaterThan(0);
+  });
+});
+
+describe("dag layers", () => {
+  it("computeLayers 按依赖分层", async () => {
+    const { computeLayers } = await import("../../src/tui/dag");
+    const layers = computeLayers([
+      { name: "a", agent: "researcher", prompt: "x" },
+      { name: "b", agent: "designer", prompt: "y", inputs: ["a"] },
+      { name: "c", agent: "coder", prompt: "z", inputs: ["a"] },
+      { name: "d", agent: "reviewer", prompt: "w", inputs: ["b", "c"] },
+    ]);
+    expect(layers[0]).toEqual(["a"]);
+    expect(layers[1].sort()).toEqual(["b", "c"]);
+    expect(layers[2]).toEqual(["d"]);
+  });
 });
 
 describe("TUI inspect reducer", () => {

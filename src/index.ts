@@ -14,7 +14,8 @@
 import { Orchestrator } from "./core/orchestrator";
 import { Workflow } from "./core/workflow";
 import { validateWorkflowConfig } from "./core/validate";
-import { planFromTemplate } from "./core/planner";
+import { planFromTemplate, planWithAgent, plannerAgentConfig } from "./core/planner";
+import { Agent } from "./core/agent";
 import {
   createProvider,
   apiKeyEnvName,
@@ -50,8 +51,9 @@ Maestro 🎼 — 多模型 Agent 编排平台
       --out <file.yaml>   写出 YAML
       --run               生成后立即执行
       --mock              与 --run 联用
-      --no-research       跳过 research 步
-      --test              加入 tester 步
+      --llm               用 Planner 模型生成（失败回落模板）
+      --no-research       跳过 research 步（仅模板）
+      --test              加入 tester 步（仅模板）
   maestro validate <workflow.yaml>            校验 YAML + 环检测
   maestro config show                         显示 ~/.maestro/config.json
   maestro config path                         打印配置路径
@@ -219,6 +221,7 @@ async function cmdPlan(args: string[]) {
   let isMock = false;
   let research = true;
   let test = false;
+  let useLlm = false;
 
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -232,6 +235,8 @@ async function cmdPlan(args: string[]) {
       research = false;
     } else if (a === "--test") {
       test = true;
+    } else if (a === "--llm") {
+      useLlm = true;
     } else if (!a.startsWith("--")) {
       requestParts.push(a);
     }
@@ -239,19 +244,49 @@ async function cmdPlan(args: string[]) {
 
   const request = requestParts.join(" ").trim();
   if (!request) {
-    console.log('用法: maestro plan "<需求>" [--out file.yaml] [--run] [--mock]');
+    console.log(
+      '用法: maestro plan "<需求>" [--out file.yaml] [--run] [--mock] [--llm]',
+    );
     return;
   }
 
   const cfg = loadConfig();
-  const config = planFromTemplate({
+  const planOpts = {
     request,
     research,
     test,
     outputDir: cfg.outputDir ?? ".maestro/runs",
     maxGlobalRetries: cfg.maxGlobalRetries ?? 0,
     name: `plan-${slug(request).slice(0, 32)}`,
-  });
+  };
+
+  let config;
+  let source: "template" | "model" | "template-fallback" = "template";
+
+  if (useLlm) {
+    const role = plannerAgentConfig();
+    const provider = isMock
+      ? new MockProvider({ name: "planner-mock", model: "planner-mock" })
+      : createProvider(role.provider, { roleModel: role.model });
+    if (!isMock) {
+      const envName = apiKeyEnvName(role.provider);
+      if (!process.env[envName] && !cfg.providers[role.provider]?.apiKey) {
+        console.log(`⚠ 无 ${envName}，--llm 将回落模板`);
+      }
+    }
+    const agent = new Agent({ ...role, enableTools: false }, provider);
+    const planned = await planWithAgent(agent, planOpts);
+    config = planned.config;
+    source = planned.source;
+    console.log(
+      source === "model"
+        ? "\n🧠 Planner 模型生成工作流"
+        : "\n📋 Planner 回落模板流水线",
+    );
+  } else {
+    config = planFromTemplate(planOpts);
+    console.log("\n📋 Planner 模板流水线");
+  }
 
   const yamlText = stringifyYaml(config);
   console.log("\n📄 生成工作流:\n");
@@ -268,7 +303,6 @@ async function cmdPlan(args: string[]) {
     if (outFile) {
       await runWorkflow(outFile, isMock, request);
     } else {
-      // 内存跑
       await runWorkflowConfig(config, isMock, request);
     }
   }

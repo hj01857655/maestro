@@ -80,12 +80,17 @@ export function App() {
         status: "pending",
         attempts: 0,
       }));
+      const stepDeps: Record<string, string[]> = {};
+      for (const s of config.steps) {
+        stepDeps[s.name] = s.inputs ?? [];
+      }
 
       dispatch({
         type: "workflow/prepare",
         workflowName: config.name,
         steps,
         mock: isMock,
+        stepDeps,
       });
 
       const abort = new AbortController();
@@ -454,12 +459,22 @@ export function App() {
     return `${((end - state.startedAt) / 1000).toFixed(1)}s`;
   }, [state.startedAt, state.completedAt, state.mode]);
 
+  const stepDepsMap = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const [k, v] of Object.entries(state.stepDeps)) m.set(k, v);
+    return m;
+  }, [state.stepDeps]);
+
   return (
     <Box flexDirection="column" padding={1}>
       <Header state={state} />
 
       <Box marginTop={1} gap={1}>
-        <WorkflowPanel workflowName={state.workflowName} steps={state.steps} />
+        <WorkflowPanel
+          workflowName={state.workflowName}
+          steps={state.steps}
+          deps={stepDepsMap}
+        />
         <RolesPanel />
       </Box>
 

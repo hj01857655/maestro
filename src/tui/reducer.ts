@@ -78,10 +78,12 @@ export function reduce(state: TuiState, action: TuiAction): TuiState {
         mode: "running",
         workflowName: action.workflowName,
         steps: action.steps,
+        stepDeps: action.stepDeps ?? {},
         mock: action.mock,
         startedAt: Date.now(),
         completedAt: undefined,
         showHelp: false,
+        inspectStep: null,
         statusLine: `运行中: ${action.workflowName}`,
       };
     case "workflow/running":

@@ -29,6 +29,11 @@ export interface OrchestratorOptions {
   maxGlobalRetries?: number;
   /** 覆盖 workflow.outputDir 的产物目录 */
   outputDir?: string;
+  /**
+   * 是否对流式推送 step:stream（默认 true）。
+   * tools 开启的 agent 仍走整段 invoke。
+   */
+  stream?: boolean;
   /** 日志回调（兼容旧接口） */
   onLog?: (msg: string) => void;
   /** Step 完成回调（兼容旧接口） */
@@ -52,6 +57,7 @@ export class Orchestrator {
   constructor(options: OrchestratorOptions = {}) {
     this.options = {
       maxGlobalRetries: 1,
+      stream: true,
       ...options,
     };
     if (options.onEvent) {
@@ -436,8 +442,22 @@ export class Orchestrator {
       );
 
       try {
+        const toolsEnabled =
+          agent.config.enableTools ??
+          (agent.config.role === "coder" || agent.config.role === "tester");
+        const wantStream = (this.options.stream ?? true) && !toolsEnabled;
         const result = await agent.run(inputMessages, {
-          tools: agent.config.enableTools,
+          tools: toolsEnabled,
+          stream: wantStream,
+          onStream: wantStream
+            ? (delta) => {
+                this.emit({
+                  type: "step:stream",
+                  step: step.name,
+                  delta,
+                });
+              }
+            : undefined,
           onTool: (info) => {
             this.log(
               info.ok ? "info" : "warn",

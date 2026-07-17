@@ -28,6 +28,8 @@ export interface TuiState {
   mode: UiMode;
   workflowName: string;
   steps: StepUiState[];
+  /** step → inputs，用于 DAG 分层 */
+  stepDeps: Record<string, string[]>;
   logs: LogEntry[];
   statusLine: string;
   startedAt?: number;
@@ -54,6 +56,7 @@ export function createInitialState(): TuiState {
     mode: "idle",
     workflowName: "",
     steps: [],
+    stepDeps: {},
     logs: [],
     statusLine: "就绪 · 输入 /help 查看命令",
     mock: false,

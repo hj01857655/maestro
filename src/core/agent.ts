@@ -25,6 +25,10 @@ export interface AgentRunOptions {
   maxToolRounds?: number;
   /** tool 上下文 */
   toolContext?: Partial<ToolContext>;
+  /** 优先流式（tools 开启时仅首轮/无 tool 时流式） */
+  stream?: boolean;
+  /** 流式 token 回调 */
+  onStream?: (delta: string) => void;
   /** tool 执行回调（日志） */
   onTool?: (info: {
     name: string;
@@ -99,11 +103,44 @@ export class Agent {
       });
     }
 
-    if (!useTools) {
-      return this.provider.invoke(fullMessages, invokeOpts);
+    if (useTools) {
+      return this.runWithTools(fullMessages, invokeOpts, opts);
     }
 
-    return this.runWithTools(fullMessages, invokeOpts, opts);
+    if (opts.stream) {
+      return this.runStream(fullMessages, invokeOpts, opts.onStream);
+    }
+
+    return this.provider.invoke(fullMessages, invokeOpts);
+  }
+
+  /** 流式调用；仅在 provider 不支持流式时回落 invoke */
+  private async runStream(
+    messages: Message[],
+    invokeOpts: { temperature?: number; maxTokens?: number },
+    onStream?: (delta: string) => void,
+  ): Promise<ProviderResult> {
+    try {
+      const stream = await this.provider.invokeStream(messages, invokeOpts);
+      let content = "";
+      for await (const delta of stream) {
+        content += delta;
+        onStream?.(delta);
+      }
+      return {
+        content,
+        model: this.provider.model,
+        provider: this.provider.kind,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // 仅「不支持流式」时回落；业务失败（含 mock fail）直接抛出，避免双计 attempts
+      if (!/不支持流式/.test(msg)) throw err;
+
+      const result = await this.provider.invoke(messages, invokeOpts);
+      if (onStream && result.content) onStream(result.content);
+      return result;
+    }
   }
 
   private async runWithTools(

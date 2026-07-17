@@ -21,6 +21,7 @@ export type TuiAction =
       workflowName: string;
       steps: StepUiState[];
       mock: boolean;
+      stepDeps?: Record<string, string[]>;
     }
   | { type: "workflow/running" }
   | { type: "workflow/finished"; status: "completed" | "failed" | "cancelled"; durationMs?: number }
