@@ -231,6 +231,10 @@ Agent 可输出 tool 块调用本地能力（路径限制在 workspace 内）：
 ```bash
 # 确定性模板：research → design → code → review
 bun src/index.ts plan "实现搜索" --test --out .maestro/search.yaml
+
+# 用 Planner 模型生成（失败回落模板）；可加 --mock 测通路
+bun src/index.ts plan "实现搜索" --llm --mock --out .maestro/search.yaml
 ```
 
-TUI：`/plan 实现搜索 --mock`。
+TUI：`/plan 实现搜索 --mock`。运行中非 tool 角色会推送 `step:stream`，`/show` 可看累积输出。Workflow 面板按依赖分层显示。
+
