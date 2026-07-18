@@ -6,6 +6,7 @@
  */
 
 import type { OrchestratorEvent } from "../core/events";
+import type { PermissionMode } from "../permissions";
 import type { StepUiState } from "./state";
 
 export type TuiAction =
@@ -58,6 +59,21 @@ export type TuiAction =
       statusLine?: string;
     }
   | { type: "workflow/reset" }
+  | {
+      type: "permission/set-mode";
+      mode: PermissionMode;
+    }
+  | {
+      type: "permission/pending";
+      pending: {
+        id: number;
+        tool: string;
+        risk: string;
+        summary: string;
+        step?: string;
+        agent?: string;
+      } | null;
+    }
   | { type: "quit" };
 
 /** Effect — 由 reduce 产出，交给 effect runner 执行（异步/IO） */
@@ -66,5 +82,6 @@ export type TuiEffect =
   | { type: "plan-and-run"; request: string; mock: boolean; test?: boolean }
   | { type: "rerun-last" }
   | { type: "stop-workflow" }
+  | { type: "permission-answer"; allow: boolean }
   | { type: "exit" }
   | { type: "none" };

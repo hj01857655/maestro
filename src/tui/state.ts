@@ -3,6 +3,7 @@
  */
 
 import type { StepStatus } from "../types";
+import type { PermissionMode } from "../permissions";
 
 export type UiMode = "idle" | "running" | "completed" | "failed" | "help";
 
@@ -22,6 +23,15 @@ export interface LogEntry {
   time: string;
   level: "info" | "success" | "error" | "warn";
   message: string;
+}
+
+export interface PendingPermissionUi {
+  id: number;
+  tool: string;
+  risk: string;
+  summary: string;
+  step?: string;
+  agent?: string;
 }
 
 export interface TuiState {
@@ -53,6 +63,10 @@ export interface TuiState {
   sessionId?: string;
   /** 会话显示名 */
   sessionName?: string;
+  /** 当前权限模式 */
+  permissionMode: PermissionMode;
+  /** 等待用户确认的 tool 调用 */
+  pendingPermission: PendingPermissionUi | null;
 }
 
 export interface TuiBootstrap {
@@ -65,6 +79,7 @@ export interface TuiBootstrap {
   logs?: LogEntry[];
   steps?: StepUiState[];
   stepDeps?: Record<string, string[]>;
+  permissionMode?: PermissionMode;
 }
 
 export function createInitialState(boot?: TuiBootstrap): TuiState {
@@ -90,6 +105,8 @@ export function createInitialState(boot?: TuiBootstrap): TuiState {
     inspectStep: null,
     sessionId: boot?.sessionId,
     sessionName: boot?.sessionName,
+    permissionMode: boot?.permissionMode ?? "auto",
+    pendingPermission: null,
   };
 }
 

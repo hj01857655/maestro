@@ -23,6 +23,12 @@ import type {
   ProviderKind,
   RunState,
 } from "../types";
+import {
+  PermissionPolicy,
+  normalizePermissionMode,
+  type PermissionMode,
+  type PermissionAskHandler,
+} from "../permissions";
 
 export interface OrchestratorOptions {
   /** 最大全局重试轮次 */
@@ -34,6 +40,13 @@ export interface OrchestratorOptions {
    * tools 开启的 agent 仍走整段 invoke。
    */
   stream?: boolean;
+  /**
+   * 权限模式（默认 auto = 兼容旧行为全部放行）。
+   * plan | default | accept-edits | auto
+   */
+  permissionMode?: PermissionMode;
+  /** 权限确认回调（default / accept-edits 的 ask 路径） */
+  permissionAsk?: PermissionAskHandler;
   /** 日志回调（兼容旧接口） */
   onLog?: (msg: string) => void;
   /** Step 完成回调（兼容旧接口） */
@@ -53,16 +66,34 @@ export class Orchestrator {
   private abortController?: AbortController;
   private artifacts?: ArtifactStore;
   options: OrchestratorOptions;
+  /** 运行期权限策略 */
+  permissions: PermissionPolicy;
 
   constructor(options: OrchestratorOptions = {}) {
     this.options = {
       maxGlobalRetries: 1,
       stream: true,
+      permissionMode: "auto",
       ...options,
     };
+    this.permissions = new PermissionPolicy({
+      mode: this.options.permissionMode ?? "auto",
+      ask: this.options.permissionAsk,
+    });
     if (options.onEvent) {
       this.listeners.add(options.onEvent);
     }
+  }
+
+  setPermissionMode(mode: PermissionMode | string): void {
+    const m = normalizePermissionMode(String(mode), this.permissions.mode);
+    this.permissions.setMode(m);
+    this.options.permissionMode = m;
+  }
+
+  setPermissionAsk(ask?: PermissionAskHandler): void {
+    this.permissions.setAsk(ask);
+    this.options.permissionAsk = ask;
   }
 
   on(listener: OrchestratorListener): () => void {
@@ -449,6 +480,10 @@ export class Orchestrator {
         const result = await agent.run(inputMessages, {
           tools: toolsEnabled,
           stream: wantStream,
+          permissions: this.permissions,
+          toolContext: {
+            meta: { step: step.name, agent: agent.config.name },
+          },
           onStream: wantStream
             ? (delta) => {
                 this.emit({
@@ -459,9 +494,17 @@ export class Orchestrator {
               }
             : undefined,
           onTool: (info) => {
+            this.emit({
+              type: "tool:call",
+              step: step.name,
+              tool: info.name,
+              ok: info.ok,
+              denied: info.denied,
+              summary: info.result.slice(0, 80).replace(/\n/g, " "),
+            });
             this.log(
-              info.ok ? "info" : "warn",
-              `  🔧 ${step.name} tool:${info.name} ${info.ok ? "ok" : "fail"} · ${info.result.slice(0, 60).replace(/\n/g, " ")}`,
+              info.denied ? "warn" : info.ok ? "info" : "warn",
+              `  🔧 ${step.name} tool:${info.name}${info.denied ? " DENIED" : info.ok ? " ok" : " fail"} · ${info.result.slice(0, 60).replace(/\n/g, " ")}`,
             );
           },
         });

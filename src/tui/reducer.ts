@@ -160,6 +160,14 @@ export function reduce(state: TuiState, action: TuiAction): TuiState {
                 : st,
             ),
           };
+        case "tool:call":
+          return pushLog(
+            state,
+            ev.denied ? "warn" : ev.ok ? "info" : "warn",
+            `🔧 ${ev.step} · ${ev.tool}${ev.denied ? " DENIED" : ev.ok ? "" : " fail"}${
+              ev.summary ? ` · ${ev.summary}` : ""
+            }`,
+          );
         case "workflow:start":
           return pushLog(
             state,
@@ -312,7 +320,22 @@ export function reduce(state: TuiState, action: TuiAction): TuiState {
         completedAt: undefined,
         inspectStep: null,
         showHelp: false,
+        pendingPermission: null,
         statusLine: "已重置 · 输入 /help",
+      };
+    case "permission/set-mode":
+      return {
+        ...state,
+        permissionMode: action.mode,
+        statusLine: `权限模式: ${action.mode}`,
+      };
+    case "permission/pending":
+      return {
+        ...state,
+        pendingPermission: action.pending,
+        statusLine: action.pending
+          ? `权限确认: ${action.pending.tool} · /allow 或 /deny`
+          : state.statusLine,
       };
     case "quit":
       return state;

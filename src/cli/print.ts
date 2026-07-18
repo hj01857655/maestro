@@ -9,7 +9,7 @@
 import { Agent } from "../core/agent";
 import { createProvider, apiKeyEnvName } from "../providers";
 import { MockProvider } from "../testing/MockProvider";
-import { loadConfig } from "../config/store";
+import { loadConfig, resolvePermissionMode } from "../config/store";
 import { BUILTIN_ROLES } from "../roles";
 import type { AgentConfig, ProviderKind, ProviderResult } from "../types";
 import {
@@ -19,6 +19,7 @@ import {
   touchSession,
 } from "../session";
 import type { OutputFormat } from "./args";
+import { PermissionPolicy } from "../permissions";
 
 export interface PrintOptions {
   prompt: string;
@@ -31,6 +32,8 @@ export interface PrintOptions {
   /** 续跑时复用 session id */
   sessionId?: string;
   tools?: boolean;
+  /** 权限模式（tools 开启时生效） */
+  permissionMode?: import("../permissions").PermissionMode | string;
 }
 
 function resolveRole(roleName?: string): AgentConfig {
@@ -98,11 +101,19 @@ export async function runPrint(opts: PrintOptions): Promise<number> {
     provider,
   );
 
+  const permMode = resolvePermissionMode(
+    typeof opts.permissionMode === "string" || opts.permissionMode
+      ? String(opts.permissionMode)
+      : undefined,
+  );
+  const permissions = new PermissionPolicy({ mode: permMode });
+
   let result: ProviderResult;
   try {
     result = await agent.run([{ role: "user", content: prompt }], {
       tools: opts.tools ?? false,
       stream: false,
+      permissions,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

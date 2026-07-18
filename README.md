@@ -114,12 +114,36 @@ bun run tui
 /sessions [--all] [query]          列出会话
 /resume [id|query|latest]          加载历史会话
 /export [path]                     导出当前会话摘要 JSON
+/permissions [mode] [--save]       权限模式 plan|default|accept-edits|auto
+/allow · /deny                     确认/拒绝当前 tool（y/n · Esc）
 /quit                              退出
 ```
 
-快捷键：`Ctrl+C` 运行中取消 / 空闲退出；`↑` `↓` 命令历史或下拉选择；`Tab` 补全；`Esc` 关闭下拉。
+快捷键：`Ctrl+C` 运行中取消 / 空闲退出；`↑` `↓` 命令历史或下拉选择；`Tab` 补全；`Esc` 关闭下拉 / 拒绝权限。
 
 输入 `/` 会弹出 Slash 命令下拉（前缀过滤）。
+
+### 权限模式
+
+对齐 Claude / Grok 的 tool 门闸（默认 `auto`，兼容旧行为）：
+
+| 模式 | 读 | 写 | 执行 |
+|------|----|----|------|
+| `plan` | ✓ | ✗ | ✗ |
+| `default` | ✓ | 确认 | 确认 |
+| `accept-edits` | ✓ | ✓ | 确认 |
+| `auto` | ✓ | ✓ | ✓ |
+
+```bash
+maestro --permission-mode plan
+maestro run wf.yaml --mock --perm default
+# 或 env
+set MAESTRO_PERMISSION_MODE=accept-edits
+# 或写入 ~/.maestro/config.json → permissionMode
+# TUI: /permissions plan --save
+```
+
+无交互（CLI / CI）下，`default`/`accept-edits` 的「确认」在无 handler 时拒绝。TUI 会弹出确认条，可用 `/allow` `/deny` 或 `y`/`n`。
 
 无需 API Key 的完整演示：
 
@@ -129,6 +153,7 @@ bun run tui
 /sessions
 /resume latest
 /rerun
+/permissions plan
 ```
 
 ### CLI

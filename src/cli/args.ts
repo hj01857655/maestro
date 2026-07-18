@@ -27,6 +27,8 @@ export interface GlobalCliOptions {
   outputFormat: OutputFormat;
   mock: boolean;
   role?: string;
+  /** plan | default | accept-edits | auto */
+  permissionMode?: string;
   /** 去掉全局旗标后的剩余 argv */
   rest: string[];
 }
@@ -71,7 +73,13 @@ export function parseGlobalArgs(argv: string[]): GlobalCliOptions {
         a === "--role" ||
         a === "--agent" ||
         a.startsWith("--role=") ||
-        a.startsWith("--agent=")
+        a.startsWith("--agent=") ||
+        a === "--permission-mode" ||
+        a === "--perm" ||
+        a === "--permissions" ||
+        a.startsWith("--permission-mode=") ||
+        a.startsWith("--perm=") ||
+        a.startsWith("--permissions=")
       ) {
         // fall through to flag handlers below
       } else if (a === "--") {
@@ -174,6 +182,27 @@ export function parseGlobalArgs(argv: string[]): GlobalCliOptions {
 
     if (a === "--mock") {
       opts.mock = true;
+      i++;
+      continue;
+    }
+
+    if (
+      a === "--permission-mode" ||
+      a === "--perm" ||
+      a === "--permissions"
+    ) {
+      const v = argv[i + 1];
+      if (!v || v.startsWith("-")) throw new Error(`${a} 需要模式参数`);
+      opts.permissionMode = v;
+      i += 2;
+      continue;
+    }
+    if (
+      a.startsWith("--permission-mode=") ||
+      a.startsWith("--perm=") ||
+      a.startsWith("--permissions=")
+    ) {
+      opts.permissionMode = a.slice(a.indexOf("=") + 1);
       i++;
       continue;
     }

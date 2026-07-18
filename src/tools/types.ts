@@ -36,6 +36,22 @@ export interface ToolContext {
   workspaceRoot: string;
   /** 命令超时 ms */
   commandTimeoutMs?: number;
+  /**
+   * 权限门闸（可选）。
+   * 未设置时保持旧行为：全部放行。
+   */
+  permissions?: {
+    check: (
+      tool: string,
+      args: Record<string, unknown>,
+      meta?: { step?: string; agent?: string },
+    ) => Promise<{
+      allowed: boolean;
+      reason: string;
+    }>;
+  };
+  /** 调用方元信息（step / agent） */
+  meta?: { step?: string; agent?: string };
 }
 
 export interface Tool {

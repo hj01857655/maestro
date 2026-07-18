@@ -37,6 +37,15 @@ export function Header({ state }: Props) {
       : state.sessionId.slice(0, 8)
     : null;
 
+  const permColor =
+    state.permissionMode === "plan"
+      ? "blue"
+      : state.permissionMode === "auto"
+        ? "gray"
+        : state.permissionMode === "accept-edits"
+          ? "green"
+          : "yellow";
+
   return (
     <Box
       borderStyle="round"
@@ -52,6 +61,9 @@ export function Header({ state }: Props) {
         {sessionLabel ? ` session ${sessionLabel} ` : " multi-model orchestrator "}
       </Text>
       <Box>
+        <Text color={permColor}>
+          [{state.permissionMode}]{" "}
+        </Text>
         {state.mock && (
           <Text color="yellow" bold>
             [MOCK]{" "}

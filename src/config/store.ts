@@ -11,6 +11,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { OpenAIApiFormat, ProviderKind } from "../types";
+import {
+  normalizePermissionMode,
+  type PermissionMode,
+} from "../permissions";
 
 export interface ProviderEntry {
   baseUrl?: string;
@@ -27,6 +31,11 @@ export interface MaestroConfig {
   outputDir?: string;
   /** 默认 maxGlobalRetries */
   maxGlobalRetries?: number;
+  /**
+   * 默认权限模式：plan | default | accept-edits | auto
+   * 未设置时运行时用 auto（兼容旧行为）
+   */
+  permissionMode?: PermissionMode;
 }
 
 const CONFIG_VERSION = 1 as const;
@@ -56,6 +65,9 @@ export function loadConfig(): MaestroConfig {
       providers: raw.providers ?? {},
       outputDir: raw.outputDir,
       maxGlobalRetries: raw.maxGlobalRetries,
+      permissionMode: raw.permissionMode
+        ? normalizePermissionMode(raw.permissionMode, "auto")
+        : undefined,
     };
   } catch {
     return defaultConfig();
@@ -71,6 +83,7 @@ export function saveConfig(config: MaestroConfig): string {
     providers: config.providers ?? {},
     outputDir: config.outputDir,
     maxGlobalRetries: config.maxGlobalRetries,
+    permissionMode: config.permissionMode,
   };
   fs.writeFileSync(p, JSON.stringify(toWrite, null, 2) + "\n", "utf-8");
   return p;
@@ -105,6 +118,31 @@ export function unsetProvider(kind: ProviderKind): MaestroConfig {
 /** 读取配置中某 provider 的覆盖项（可能为空） */
 export function getProviderEntry(kind: ProviderKind): ProviderEntry {
   return loadConfig().providers[kind] ?? {};
+}
+
+/** 写入全局权限模式 */
+export function setPermissionMode(mode: PermissionMode): MaestroConfig {
+  const cfg = loadConfig();
+  cfg.permissionMode = mode;
+  saveConfig(cfg);
+  return cfg;
+}
+
+/**
+ * 解析运行时权限模式优先级：
+ * 显式参数 > env MAESTRO_PERMISSION_MODE > config > auto
+ */
+export function resolvePermissionMode(
+  explicit?: string | PermissionMode | null,
+): PermissionMode {
+  if (explicit) {
+    return normalizePermissionMode(String(explicit), "auto");
+  }
+  const env = process.env.MAESTRO_PERMISSION_MODE;
+  if (env) return normalizePermissionMode(env, "auto");
+  const cfg = loadConfig();
+  if (cfg.permissionMode) return cfg.permissionMode;
+  return "auto";
 }
 
 function stripEmpty(entry: ProviderEntry): ProviderEntry {

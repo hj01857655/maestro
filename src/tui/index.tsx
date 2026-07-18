@@ -17,6 +17,8 @@ import {
   touchSession,
   type SessionRecord,
 } from "../session";
+import { resolvePermissionMode } from "../config/store";
+import type { PermissionMode } from "../permissions";
 
 export interface StartTuiOptions {
   /** 恢复的会话 */
@@ -24,15 +26,20 @@ export interface StartTuiOptions {
   /** 新建会话名（-n） */
   name?: string;
   mock?: boolean;
+  permissionMode?: PermissionMode | string;
 }
 
-function bootstrapFromSession(session: SessionRecord): TuiBootstrap {
+function bootstrapFromSession(
+  session: SessionRecord,
+  permissionMode?: PermissionMode,
+): TuiBootstrap {
   return {
     sessionId: session.id,
     sessionName: session.name,
     commandHistory: session.commandHistory ?? [],
     mock: session.mock,
     workflowName: session.workflowName,
+    permissionMode,
     statusLine: `续会话 ${session.id}${session.name ? ` "${session.name}"` : ""} · ${session.status} · /help`,
     logs: (session.logs ?? []).map((l, i) => ({
       id: i + 1,
@@ -58,6 +65,10 @@ export async function startTui(opts: StartTuiOptions = {}): Promise<void> {
     );
   }
 
+  const permissionMode = resolvePermissionMode(
+    opts.permissionMode != null ? String(opts.permissionMode) : undefined,
+  );
+
   let session = opts.session;
   if (session) {
     // 续跑：刷新状态为 active
@@ -75,9 +86,13 @@ export async function startTui(opts: StartTuiOptions = {}): Promise<void> {
     saveSession(session);
   }
 
-  const bootstrap = bootstrapFromSession(session);
+  const bootstrap = bootstrapFromSession(session, permissionMode);
   const instance = render(
-    <App bootstrap={bootstrap} session={session} />,
+    <App
+      bootstrap={bootstrap}
+      session={session}
+      permissionMode={permissionMode}
+    />,
   );
   await instance.waitUntilExit();
 

@@ -38,9 +38,11 @@ import {
   loadConfig,
   setProviderEntry,
   maskKey,
+  resolvePermissionMode,
   type MaestroConfig,
 } from "./config/store";
 import type { ProviderKind, WorkflowConfig } from "./types";
+import type { PermissionMode } from "./permissions";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -70,6 +72,10 @@ function log(msg: string) {
 
 function debugLog(verbose: boolean, msg: string) {
   if (verbose) console.error(`[maestro] ${msg}`);
+}
+
+function resolvePerm(globalMode?: string): PermissionMode {
+  return resolvePermissionMode(globalMode);
 }
 
 function printHelp() {
@@ -113,10 +119,13 @@ Maestro 🎼 — 多模型 Agent 编排平台  ·  ${formatVersionLine()}
   --model <model>       覆盖模型（print / 部分路径）
   --mock                模拟响应
   -d, --verbose         调试日志到 stderr
+  --permission-mode <m> plan|default|accept-edits|auto
+  --perm <m>            同上
 
 环境变量（优先于配置文件）:
   CLAUDE_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY / GROK_API_KEY
   *_BASE_URL  *_MODEL  *_API_FORMAT
+  MAESTRO_PERMISSION_MODE
 
 默认 baseUrl:
   claude  ${DEFAULT_BASE_URLS.claude}
@@ -128,6 +137,7 @@ Maestro 🎼 — 多模型 Agent 编排平台  ·  ${formatVersionLine()}
   maestro
   maestro -c
   maestro -r abc123
+  maestro --permission-mode plan
   maestro -p "写一个 hello world" --role coder --mock
   maestro sessions
   maestro update
@@ -143,6 +153,7 @@ async function startTuiOrExplain(opts: {
   session?: import("./session").SessionRecord;
   name?: string;
   mock?: boolean;
+  permissionMode?: import("./permissions").PermissionMode;
 } = {}): Promise<void> {
   const { startTui } = await import("./tui");
   await startTui(opts);
@@ -154,6 +165,7 @@ async function handleResumeContinue(opts: {
   name?: string;
   mock?: boolean;
   verbose?: boolean;
+  permissionMode?: import("./permissions").PermissionMode;
 }): Promise<number> {
   const resolved = resolveResumeTarget({
     continue: opts.continue,
@@ -180,6 +192,7 @@ async function handleResumeContinue(opts: {
     session: resolved.session,
     name: opts.name,
     mock: opts.mock ?? resolved.session.mock,
+    permissionMode: opts.permissionMode,
   });
   return 0;
 }
@@ -217,6 +230,7 @@ async function main() {
       verbose: global.verbose,
       outputFormat: global.outputFormat,
       name: global.name,
+      permissionMode: resolvePerm(global.permissionMode),
     });
     process.exitCode = code;
     return;
@@ -230,6 +244,7 @@ async function main() {
       name: global.name,
       mock: global.mock,
       verbose: global.verbose,
+      permissionMode: resolvePerm(global.permissionMode),
     });
     process.exitCode = code;
     return;
@@ -238,7 +253,11 @@ async function main() {
   // 无参数：像 claude / codex 一样直接进 TUI；非 TTY 时打印帮助
   if (args.length === 0) {
     if (process.stdin.isTTY) {
-      await startTuiOrExplain({ name: global.name, mock: global.mock });
+      await startTuiOrExplain({
+        name: global.name,
+        mock: global.mock,
+        permissionMode: resolvePerm(global.permissionMode),
+      });
     } else {
       printHelp();
     }
@@ -257,10 +276,15 @@ async function main() {
           name: global.name,
           mock: global.mock,
           verbose: global.verbose,
+          permissionMode: resolvePerm(global.permissionMode),
         });
         process.exitCode = code;
       } else {
-        await startTuiOrExplain({ name: global.name, mock: global.mock });
+        await startTuiOrExplain({
+          name: global.name,
+          mock: global.mock,
+          permissionMode: resolvePerm(global.permissionMode),
+        });
       }
       break;
     }
@@ -270,6 +294,7 @@ async function main() {
         name: global.name,
         mock: global.mock,
         verbose: global.verbose,
+        permissionMode: resolvePerm(global.permissionMode),
       });
       process.exitCode = code;
       break;
@@ -281,6 +306,7 @@ async function main() {
         name: global.name,
         mock: global.mock,
         verbose: global.verbose,
+        permissionMode: resolvePerm(global.permissionMode),
       });
       process.exitCode = code;
       break;
@@ -299,6 +325,7 @@ async function main() {
         verbose: global.verbose,
         outputFormat: global.outputFormat,
         name: global.name,
+        permissionMode: resolvePerm(global.permissionMode),
       });
       process.exitCode = code;
       break;
@@ -338,6 +365,7 @@ async function main() {
       await runWorkflow(wfPath, isMock, "CLI 任务", {
         name: global.name,
         verbose: global.verbose,
+        permissionMode: global.permissionMode,
       });
       break;
     }
@@ -346,6 +374,7 @@ async function main() {
         name: global.name,
         mock: global.mock,
         verbose: global.verbose,
+        permissionMode: global.permissionMode,
       });
       break;
     }
@@ -490,7 +519,12 @@ function redactConfig(cfg: MaestroConfig): MaestroConfig {
 
 async function cmdPlan(
   args: string[],
-  g: { name?: string; mock?: boolean; verbose?: boolean } = {},
+  g: {
+    name?: string;
+    mock?: boolean;
+    verbose?: boolean;
+    permissionMode?: string;
+  } = {},
 ) {
   const requestParts: string[] = [];
   let outFile: string | undefined;
@@ -581,11 +615,13 @@ async function cmdPlan(
       await runWorkflow(outFile, isMock, request, {
         name: g.name,
         verbose: g.verbose,
+        permissionMode: g.permissionMode,
       });
     } else {
       await runWorkflowConfig(config, isMock, request, {
         name: g.name,
         verbose: g.verbose,
+        permissionMode: g.permissionMode,
       });
     }
   }
@@ -631,7 +667,7 @@ async function runWorkflow(
   workflowPath: string | undefined,
   isMock: boolean,
   request = "CLI 任务",
-  g: { name?: string; verbose?: boolean } = {},
+  g: { name?: string; verbose?: boolean; permissionMode?: string } = {},
 ) {
   if (!workflowPath) {
     console.log("请指定工作流文件路径");
@@ -664,7 +700,7 @@ async function runWorkflowConfig(
   config: WorkflowConfig,
   isMock: boolean,
   request: string,
-  g: { name?: string; verbose?: boolean } = {},
+  g: { name?: string; verbose?: boolean; permissionMode?: string } = {},
 ) {
   console.log(`\n📄 加载工作流: ${config.name}`);
   if (isMock) {
@@ -685,11 +721,14 @@ async function runWorkflowConfig(
   console.log(`   🧾 session: ${session.id}${g.name ? ` "${g.name}"` : ""}`);
 
   const fileCfg = loadConfig();
+  const permMode = resolvePermissionMode(g.permissionMode);
   const orchestrator = new Orchestrator({
     maxGlobalRetries: config.maxGlobalRetries ?? fileCfg.maxGlobalRetries ?? 1,
     outputDir: config.outputDir ?? fileCfg.outputDir,
+    permissionMode: permMode,
     onLog: log,
   });
+  log(`   🔐 permission: ${permMode}`);
 
   if (isMock) {
     const allKinds = new Set<ProviderKind>();

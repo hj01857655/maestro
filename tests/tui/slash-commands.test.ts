@@ -76,11 +76,44 @@ describe("Slash CommandRegistry", () => {
       "resume",
       "export",
       "rerun",
+      "permissions",
+      "allow",
+      "deny",
     ]) {
       expect(reg.get(name)?.name).toBe(name);
     }
     expect(reg.get("retry")?.name).toBe("rerun");
     expect(reg.get("load")?.name).toBe("resume");
+    expect(reg.get("perm")?.name).toBe("permissions");
+  });
+
+  it("/permissions plan 应 set-mode", () => {
+    const reg = new CommandRegistry();
+    reg.registerAll(builtinCommands);
+    const result = reg.get("permissions")!.run({
+      state: createInitialState(),
+      args: ["plan"],
+      raw: "/permissions plan",
+    });
+    expect(result.kind).toBe("actions");
+    if (result.kind === "actions") {
+      expect(
+        result.actions.some(
+          (a) => a.type === "permission/set-mode" && a.mode === "plan",
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("/allow 在无 pending 时警告", () => {
+    const reg = new CommandRegistry();
+    reg.registerAll(builtinCommands);
+    const result = reg.get("allow")!.run({
+      state: createInitialState(),
+      args: [],
+      raw: "/allow",
+    });
+    expect(result.kind).toBe("message");
   });
 
   it("/version 应输出版本信息", () => {

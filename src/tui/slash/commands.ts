@@ -24,6 +24,13 @@ import {
 } from "../../session";
 import { formatVersionLine, resolveInstallInfo } from "../../cli/self";
 import type { ProviderKind } from "../../types";
+import {
+  PERMISSION_MODE_HELP,
+  formatPermissionMode,
+  parsePermissionMode,
+  type PermissionMode,
+} from "../../permissions";
+import { setPermissionMode as savePermissionMode } from "../../config/store";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -215,6 +222,101 @@ export const builtinCommands: SlashCommand[] = [
         ],
         "config",
       ),
+  },
+  {
+    name: "permissions",
+    aliases: ["permission", "perm", "mode"],
+    description: "查看/切换权限模式",
+    usage: "/permissions [plan|default|accept-edits|auto] [--save]",
+    allowWhileRunning: true,
+    run: ({ state, args }) => {
+      const save = args.includes("--save") || args.includes("-s");
+      const raw = args.find((a) => !a.startsWith("-"));
+      if (!raw) {
+        return infoLines(
+          [
+            `当前: ${formatPermissionMode(state.permissionMode)}`,
+            "",
+            PERMISSION_MODE_HELP,
+            "切换: /permissions plan|default|accept-edits|auto [--save]",
+            "确认: /allow · /deny · y/n",
+          ],
+          "permissions",
+        );
+      }
+      const mode = parsePermissionMode(raw);
+      if (!mode) {
+        return {
+          kind: "message",
+          level: "error",
+          message: `未知模式: ${raw} · plan|default|accept-edits|auto`,
+        };
+      }
+      if (save) {
+        try {
+          savePermissionMode(mode);
+        } catch (err) {
+          return {
+            kind: "message",
+            level: "error",
+            message: `写入配置失败: ${err instanceof Error ? err.message : err}`,
+          };
+        }
+      }
+      const actions: TuiAction[] = [
+        { type: "permission/set-mode", mode },
+        {
+          type: "logs/push",
+          level: "info",
+          message: `权限模式 → ${formatPermissionMode(mode)}${save ? " · 已写入配置" : " · 本次会话"}`,
+        },
+        { type: "help/hide" },
+        { type: "status/set", statusLine: `perm ${mode}` },
+      ];
+      return { kind: "actions", actions };
+    },
+  },
+  {
+    name: "allow",
+    aliases: ["yes", "y"],
+    description: "允许当前待确认 tool",
+    usage: "/allow",
+    allowWhileRunning: true,
+    run: ({ state }) => {
+      if (!state.pendingPermission) {
+        return {
+          kind: "message",
+          level: "warn",
+          message: "当前无待确认权限",
+        };
+      }
+      return {
+        kind: "effect",
+        effect: { type: "permission-answer", allow: true },
+        actions: [{ type: "help/hide" }],
+      };
+    },
+  },
+  {
+    name: "deny",
+    aliases: ["no", "n"],
+    description: "拒绝当前待确认 tool",
+    usage: "/deny",
+    allowWhileRunning: true,
+    run: ({ state }) => {
+      if (!state.pendingPermission) {
+        return {
+          kind: "message",
+          level: "warn",
+          message: "当前无待确认权限",
+        };
+      }
+      return {
+        kind: "effect",
+        effect: { type: "permission-answer", allow: false },
+        actions: [{ type: "help/hide" }],
+      };
+    },
   },
   {
     name: "version",

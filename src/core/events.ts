@@ -28,6 +28,14 @@ export type OrchestratorEvent =
       step: string;
       delta: string;
     }
+  | {
+      type: "tool:call";
+      step: string;
+      tool: string;
+      ok: boolean;
+      denied?: boolean;
+      summary?: string;
+    }
   | { type: "log"; level: "info" | "success" | "error" | "warn"; message: string }
   | { type: "retry:round"; round: number };
 

@@ -51,6 +51,21 @@ export class ToolRegistry {
         };
       }
     }
+    // 权限门闸
+    if (ctx.permissions) {
+      const gate = await ctx.permissions.check(
+        call.name,
+        call.arguments,
+        ctx.meta,
+      );
+      if (!gate.allowed) {
+        return {
+          ok: false,
+          content: `权限拒绝: ${gate.reason}`,
+          error: `权限拒绝: ${gate.reason}`,
+        };
+      }
+    }
     return tool.execute(call.arguments, ctx);
   }
 }

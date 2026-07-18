@@ -25,6 +25,7 @@ import {
   nativeToolsPromptSection,
   type ToolContext,
 } from "../tools";
+import type { PermissionPolicy } from "../permissions";
 
 export interface AgentRunOptions {
   /** 额外临时指令 */
@@ -42,6 +43,8 @@ export interface AgentRunOptions {
   maxToolRounds?: number;
   /** tool 上下文 */
   toolContext?: Partial<ToolContext>;
+  /** 权限策略（写入 ToolContext） */
+  permissions?: PermissionPolicy;
   /** 优先流式（tools 开启时仅首轮/无 tool 时流式） */
   stream?: boolean;
   /** 流式 token 回调 */
@@ -53,6 +56,7 @@ export interface AgentRunOptions {
     result: string;
     ok: boolean;
     callId?: string;
+    denied?: boolean;
   }) => void;
 }
 
@@ -179,6 +183,17 @@ export class Agent {
       cwd: opts.toolContext?.cwd ?? process.cwd(),
       workspaceRoot: opts.toolContext?.workspaceRoot ?? process.cwd(),
       commandTimeoutMs: opts.toolContext?.commandTimeoutMs,
+      meta: opts.toolContext?.meta,
+      permissions: opts.permissions
+        ? {
+            check: (tool, args, meta) =>
+              opts.permissions!.check(
+                tool,
+                args,
+                meta ?? opts.toolContext?.meta,
+              ),
+          }
+        : opts.toolContext?.permissions,
     };
 
     const history = [...messages];
@@ -229,11 +244,13 @@ export class Agent {
       const resultBlocks: string[] = [];
       for (const call of calls) {
         const result = await this.tools.execute(call, ctx);
+        const denied = Boolean(result.error?.startsWith("权限拒绝"));
         opts.onTool?.({
           name: call.name,
           args: call.arguments,
           result: result.content.slice(0, 500),
           ok: result.ok,
+          denied,
         });
         resultBlocks.push(
           `### tool:${call.name}\n\`\`\`\n${result.content.slice(0, 16_000)}\n\`\`\``,
@@ -269,12 +286,14 @@ export class Agent {
       { name: tc.name, arguments: args },
       ctx,
     );
+    const denied = Boolean(result.error?.startsWith("权限拒绝"));
     opts.onTool?.({
       name: tc.name,
       args,
       result: result.content.slice(0, 500),
       ok: result.ok,
       callId: tc.callId,
+      denied,
     });
     history.push({
       role: "tool",

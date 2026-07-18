@@ -41,7 +41,7 @@ import { validateWorkflowConfig } from "../core/validate";
 import { planFromTemplate } from "../core/planner";
 import { MockProvider } from "../testing/MockProvider";
 import { createProvider, apiKeyEnvName } from "../providers";
-import { loadConfig } from "../config/store";
+import { loadConfig, resolvePermissionMode } from "../config/store";
 import { BUILTIN_ROLES } from "../roles";
 import type { ProviderKind, WorkflowConfig } from "../types";
 import {
@@ -51,6 +51,8 @@ import {
   touchSession,
   type SessionRecord,
 } from "../session";
+import type { PermissionMode, PermissionRequest } from "../permissions";
+import { formatPermissionMode } from "../permissions";
 
 const registry = new CommandRegistry();
 registry.registerAll(builtinCommands);
@@ -59,18 +61,36 @@ export interface AppProps {
   bootstrap?: TuiBootstrap;
   /** 已有会话则续；否则新建 */
   session?: SessionRecord;
+  /** 启动时权限模式（CLI / config） */
+  permissionMode?: PermissionMode;
 }
 
-export function App({ bootstrap, session: initialSession }: AppProps = {}) {
+export function App({
+  bootstrap,
+  session: initialSession,
+  permissionMode: initialPermissionMode,
+}: AppProps = {}) {
   const { exit } = useApp();
   const [state, setState] = useState<TuiState>(() =>
-    createInitialState(bootstrap),
+    createInitialState({
+      ...bootstrap,
+      permissionMode:
+        initialPermissionMode ??
+        bootstrap?.permissionMode ??
+        resolvePermissionMode(),
+    }),
   );
   const abortRef = useRef<AbortController | null>(null);
   const orchRef = useRef<Orchestrator | null>(null);
   // 用 ref 读最新 state，避免 useInput 闭包过期
   const stateRef = useRef(state);
   stateRef.current = state;
+
+  // 权限确认队列：default / accept-edits 的 ask 路径
+  const permSeq = useRef(0);
+  const permWaiters = useRef(
+    new Map<number, { resolve: (v: boolean) => void }>(),
+  );
 
   // 会话：启动时绑定；全程用 ref 持有最新 record
   const sessionRef = useRef<SessionRecord | null>(initialSession ?? null);
@@ -132,6 +152,67 @@ export function App({ bootstrap, session: initialSession }: AppProps = {}) {
     setState((s) => actions.reduce((acc, a) => reduce(acc, a), s));
   }, []);
 
+  const answerPermission = useCallback(
+    (allow: boolean) => {
+      const pending = stateRef.current.pendingPermission;
+      if (!pending) {
+        setState((s) =>
+          reduce(s, {
+            type: "logs/push",
+            level: "warn",
+            message: "当前无待确认权限",
+          }),
+        );
+        return;
+      }
+      const waiter = permWaiters.current.get(pending.id);
+      if (waiter) {
+        waiter.resolve(allow);
+        permWaiters.current.delete(pending.id);
+      }
+      setState((s) => {
+        let next = reduce(s, { type: "permission/pending", pending: null });
+        next = reduce(next, {
+          type: "logs/push",
+          level: allow ? "success" : "warn",
+          message: allow
+            ? `✅ 已允许 ${pending.tool}`
+            : `⛔ 已拒绝 ${pending.tool}`,
+        });
+        return next;
+      });
+    },
+    [],
+  );
+
+  const permissionAsk = useCallback(async (req: PermissionRequest) => {
+    const id = ++permSeq.current;
+    const summary = summarizeToolArgs(req.tool, req.args);
+    setState((s) =>
+      reduce(s, {
+        type: "permission/pending",
+        pending: {
+          id,
+          tool: req.tool,
+          risk: req.risk,
+          summary,
+          step: req.step,
+          agent: req.agent,
+        },
+      }),
+    );
+    setState((s) =>
+      reduce(s, {
+        type: "logs/push",
+        level: "warn",
+        message: `🔐 权限确认 [${req.risk}] ${req.tool}${req.step ? ` @${req.step}` : ""} · ${summary} · /allow 或 /deny`,
+      }),
+    );
+    return new Promise<boolean>((resolve) => {
+      permWaiters.current.set(id, { resolve });
+    });
+  }, []);
+
   const onOrchestratorEvent = useCallback(
     (event: OrchestratorEvent) => {
       dispatch({ type: "orchestrator/event", event });
@@ -175,12 +256,20 @@ export function App({ bootstrap, session: initialSession }: AppProps = {}) {
       abortRef.current = abort;
 
       const fileCfg = loadConfig();
+      const permMode = stateRef.current.permissionMode ?? resolvePermissionMode();
       const orch = new Orchestrator({
         maxGlobalRetries: config.maxGlobalRetries ?? fileCfg.maxGlobalRetries ?? 1,
         outputDir: config.outputDir ?? fileCfg.outputDir,
+        permissionMode: permMode,
+        permissionAsk,
         onEvent: onOrchestratorEvent,
       });
       orchRef.current = orch;
+      dispatch({
+        type: "logs/push",
+        level: "info",
+        message: `🔐 权限: ${formatPermissionMode(permMode)}`,
+      });
 
       const kinds = new Set<ProviderKind>();
       for (const step of config.steps) {
@@ -305,11 +394,15 @@ export function App({ bootstrap, session: initialSession }: AppProps = {}) {
       } finally {
         abortRef.current = null;
         orchRef.current = null;
+        // 清理未决权限
+        for (const [, w] of permWaiters.current) w.resolve(false);
+        permWaiters.current.clear();
+        dispatch({ type: "permission/pending", pending: null });
         // 退出前再刷一次 history
         persistSession();
       }
     },
-    [dispatch, dispatchMany, onOrchestratorEvent, persistSession],
+    [dispatch, dispatchMany, onOrchestratorEvent, persistSession, permissionAsk],
   );
 
   const runWorkflow = useCallback(
@@ -413,13 +506,22 @@ export function App({ bootstrap, session: initialSession }: AppProps = {}) {
         case "rerun-last":
           void rerunLast();
           break;
+        case "permission-answer":
+          answerPermission(effect.allow);
+          break;
         case "stop-workflow":
           abortRef.current?.abort();
           orchRef.current?.cancel();
+          // 取消时拒绝未决权限
+          for (const [, w] of permWaiters.current) w.resolve(false);
+          permWaiters.current.clear();
+          dispatch({ type: "permission/pending", pending: null });
           break;
         case "exit":
           abortRef.current?.abort();
           orchRef.current?.cancel();
+          for (const [, w] of permWaiters.current) w.resolve(false);
+          permWaiters.current.clear();
           persistSession({ status: "idle" });
           exit();
           break;
@@ -427,7 +529,7 @@ export function App({ bootstrap, session: initialSession }: AppProps = {}) {
           break;
       }
     },
-    [exit, runWorkflow, planAndRun, rerunLast, persistSession],
+    [exit, runWorkflow, planAndRun, rerunLast, persistSession, answerPermission, dispatch],
   );
 
   const slashMatches = useMemo(() => {
@@ -528,6 +630,12 @@ export function App({ bootstrap, session: initialSession }: AppProps = {}) {
           }
         }
 
+        // /permissions 切换：同步到 orch + 可选落盘
+        const modeAct = applied.find((a) => a.type === "permission/set-mode");
+        if (modeAct && modeAct.type === "permission/set-mode") {
+          orchRef.current?.setPermissionMode(modeAct.mode);
+        }
+
         return next;
       });
     },
@@ -542,14 +650,30 @@ export function App({ bootstrap, session: initialSession }: AppProps = {}) {
       Math.max(0, matches.length - 1),
     );
 
-    // Esc 关闭下拉 / 预览
+    // Esc 关闭下拉 / 预览 / 拒绝权限
     if (key.escape) {
+      if (current.pendingPermission) {
+        answerPermission(false);
+        return;
+      }
       if (current.slashOpen) {
         dispatch({ type: "slash/close" });
         return;
       }
       if (current.inspectStep) {
         dispatch({ type: "inspect/close" });
+        return;
+      }
+    }
+
+    // 快捷键：y/n 回答权限（输入框为空时）
+    if (current.pendingPermission && !current.input && !current.slashOpen) {
+      if (inputKey === "y" || inputKey === "Y") {
+        answerPermission(true);
+        return;
+      }
+      if (inputKey === "n" || inputKey === "N") {
+        answerPermission(false);
         return;
       }
     }
@@ -675,11 +799,36 @@ export function App({ bootstrap, session: initialSession }: AppProps = {}) {
         </Box>
       )}
 
+      {state.pendingPermission && (
+        <Box
+          marginTop={1}
+          borderStyle="round"
+          borderColor="yellow"
+          paddingX={1}
+          flexDirection="column"
+        >
+          <Text bold color="yellow">
+            🔐 Permission · {state.pendingPermission.risk} ·{" "}
+            {state.pendingPermission.tool}
+          </Text>
+          <Text>
+            {state.pendingPermission.summary}
+            {state.pendingPermission.step
+              ? ` · step ${state.pendingPermission.step}`
+              : ""}
+          </Text>
+          <Text color="gray">
+            /allow · /deny · y/n · Esc 拒绝
+          </Text>
+        </Box>
+      )}
+
       {state.startedAt && (
         <Box marginTop={0}>
           <Text color="gray">
             {duration && `elapsed ${duration}`}
             {state.mock ? " · mock" : ""}
+            {` · perm ${state.permissionMode}`}
           </Text>
         </Box>
       )}
@@ -705,4 +854,28 @@ export function App({ bootstrap, session: initialSession }: AppProps = {}) {
       </Box>
     </Box>
   );
+}
+
+function summarizeToolArgs(
+  tool: string,
+  args: Record<string, unknown>,
+): string {
+  if (tool === "write_file") {
+    const p = String(args.path ?? "");
+    const len = Buffer.byteLength(String(args.content ?? ""), "utf-8");
+    return `path=${p} · ${len}B`;
+  }
+  if (tool === "run_cmd") {
+    const cmd = String(args.command ?? "");
+    const a = String(args.args ?? "");
+    return `$ ${cmd}${a ? " " + a : ""}`.slice(0, 100);
+  }
+  if (tool === "read_file" || tool === "list_dir") {
+    return `path=${String(args.path ?? ".")}`;
+  }
+  try {
+    return JSON.stringify(args).slice(0, 100);
+  } catch {
+    return tool;
+  }
 }
