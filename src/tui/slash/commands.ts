@@ -66,7 +66,15 @@ export const builtinCommands: SlashCommand[] = [
           DEFAULT_BASE_URLS[k];
         const model =
           e?.model || process.env[`${k.toUpperCase()}_MODEL`] || "(默认)";
-        return `  ${k}: key=${maskKey(key)} · ${url} · ${model}`;
+        const fmt =
+          k === "openai" || k === "grok"
+            ? e?.apiFormat ||
+              process.env[`${k.toUpperCase()}_API_FORMAT`] ||
+              "chat"
+            : undefined;
+        return fmt
+          ? `  ${k}: key=${maskKey(key)} · ${url} · ${model} · ${fmt}`
+          : `  ${k}: key=${maskKey(key)} · ${url} · ${model}`;
       });
       return {
         kind: "actions",

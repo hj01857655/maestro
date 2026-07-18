@@ -119,6 +119,7 @@ bun src/index.ts list-roles
 bun src/index.ts validate src/examples/dev-workflow.yaml
 bun src/index.ts plan "实现用户登录" --out .maestro/login.yaml --run --mock
 bun src/index.ts config set claude apiKey=sk-ant-xxx model=claude-sonnet-4-6
+bun src/index.ts config set openai apiKey=sk-xxx model=gpt-5.6-sol apiFormat=responses
 bun src/index.ts config show
 ```
 
@@ -129,9 +130,10 @@ bun src/index.ts config show
 ```bash
 export CLAUDE_API_KEY=sk-ant-xxx
 export OPENAI_API_KEY=sk-xxx
+export OPENAI_API_FORMAT=responses   # 可选：chat（默认）| responses
 export GEMINI_API_KEY=xxx
 export GROK_API_KEY=xxx
-# 或 maestro config set <kind> apiKey=...
+# 或 maestro config set <kind> apiKey=... [apiFormat=chat|responses]
 
 bun src/index.ts run src/examples/dev-workflow.yaml
 ```
@@ -144,6 +146,32 @@ bun src/index.ts run src/examples/dev-workflow.yaml
 | openai | `https://api.openai.com` |
 | gemini | `https://generativelanguage.googleapis.com` |
 | grok | `https://api.x.ai` |
+
+OpenAI / Grok 协议（`apiFormat`）：
+
+| 值 | 端点 | 说明 |
+|----|------|------|
+| `chat`（默认） | `POST /v1/chat/completions` | 官方 Chat Completions |
+| `responses` | `POST /v1/responses` | 官方 OpenAI Responses API |
+
+`chat` 对齐官方字段：
+
+- 请求：`model` · `messages`(system|user|assistant|tool|developer) · `max_completion_tokens`（默认；`chatMaxTokensField=legacy|both` 可发 `max_tokens`）· `temperature` · `top_p` · `frequency_penalty` · `presence_penalty` · `stop` · `seed` · `n` · `stream` · `stream_options` · `tools` · `tool_choice` · `parallel_tool_calls` · `response_format` · `reasoning_effort` · `verbosity` · `modalities` · `audio` · `prediction` · `logit_bias` · `logprobs` · `top_logprobs` · `metadata` · `service_tier` · `safety_identifier` · `prompt_cache_key` · `prompt_cache_options` · `web_search_options` · `store` · `user` · `extraBody`
+- tools：统一扁平定义自动嵌套为 `{type:function,function:{name,description,parameters,strict}}`；跳过 chat 不支持的内置 tool（如 `web_search`）
+- 多模态：`Message.parts` → `text` / `image_url` / `input_audio` / `file`
+- 工具闭环：输出 `message.tool_calls` → 回灌 `role=tool` + `tool_call_id`（`toolResultMessage`）；历史回放 `assistant.tool_calls`
+- 响应：`choices[0].message.content` / `refusal` / `tool_calls`；`finish_reason` → `status`；兼容弃用 `function_call`
+- 流式：`choices[0].delta.content` · `delta.tool_calls` 按 index 聚合（`invokeStreamEvents`）· `data: [DONE]`
+
+`responses` 对齐官方字段：
+
+- 请求：`model` · `input` · `instructions` · `max_output_tokens` · `temperature` · `top_p` · `stream` · `stream_options` · `store` · `previous_response_id` · `conversation` · `background` · `include` · `max_tool_calls` · `tools` · `tool_choice` · `parallel_tool_calls` · `text.format` · `text.verbosity` · `reasoning` · `prompt` · `truncation` · `metadata` · `service_tier` · `safety_identifier` · `prompt_cache_key` · `prompt_cache_options` · `extraBody`
+- 多模态：`input_text` / `input_image` / `input_file`（`Message.parts`）
+- 工具闭环：输出 `function_call` → 回灌 `function_call_output`（`functionCallOutputMessage`）；历史 `assistant.toolCalls` → `function_call` items
+- 响应：优先 `output_text`；遍历 `output[type=message].content[type=output_text]`；解析 `toolCalls` / `responseId`
+- 流式：`response.output_text.delta` · `function_call_arguments.delta` 聚合 · `response.completed` / `failed`
+
+也接受别名：`openai_responses` / `chat_completions`。环境变量：`OPENAI_API_FORMAT` / `GROK_API_FORMAT`。
 
 Grok Researcher 走 **live search**（`search_parameters.mode=on` + citations），不是假 system prompt。
 
@@ -216,7 +244,9 @@ Step 之间通过 `{{ stepName }}` 模板语法传递上下文。
 
 ## Tools（Coder / Tester）
 
-Agent 可输出 tool 块调用本地能力（路径限制在 workspace 内）：
+默认走**原生 function calling**（Chat `tool_calls` / Responses `function_call`）：
+Provider 下发 tools schema → 模型返回 `toolCalls` → Agent 本地执行 → 回灌
+`role=tool` / `function_call_output`。无原生 `toolCalls` 时回落 markdown 块：
 
 ```text
 ```tool
@@ -225,6 +255,7 @@ Agent 可输出 tool 块调用本地能力（路径限制在 workspace 内）：
 ```
 
 内置：`read_file` · `write_file` · `list_dir` · `run_cmd`。
+路径限制在 workspace 内。`toolMode: markdown` 可强制仅用 markdown。
 
 ## Planner
 

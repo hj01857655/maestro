@@ -57,7 +57,7 @@ Maestro 🎼 — 多模型 Agent 编排平台
   maestro validate <workflow.yaml>            校验 YAML + 环检测
   maestro config show                         显示 ~/.maestro/config.json
   maestro config path                         打印配置路径
-  maestro config set <kind> key=val ...       写入 provider（baseUrl/apiKey/model）
+  maestro config set <kind> key=val ...       写入 provider（baseUrl/apiKey/model/apiFormat）
   maestro list-roles                          列出预置角色
   maestro register <kind> <name> <url> <key> [model]  会话内构造（不持久化）
 
@@ -175,10 +175,17 @@ function cmdConfig(args: string[]) {
     // config set <kind> key=val key=val
     const kind = args[1] as ProviderKind;
     if (!kind || !["claude", "openai", "gemini", "grok"].includes(kind)) {
-      console.log("用法: maestro config set <claude|openai|gemini|grok> apiKey=... [baseUrl=...] [model=...]");
+      console.log(
+        "用法: maestro config set <claude|openai|gemini|grok> apiKey=... [baseUrl=...] [model=...] [apiFormat=chat|responses]",
+      );
       return;
     }
-    const entry: { apiKey?: string; baseUrl?: string; model?: string } = {};
+    const entry: {
+      apiKey?: string;
+      baseUrl?: string;
+      model?: string;
+      apiFormat?: "chat" | "responses";
+    } = {};
     for (const pair of args.slice(2)) {
       const eq = pair.indexOf("=");
       if (eq < 0) continue;
@@ -187,9 +194,28 @@ function cmdConfig(args: string[]) {
       if (k === "apiKey" || k === "key") entry.apiKey = v;
       else if (k === "baseUrl" || k === "url") entry.baseUrl = v;
       else if (k === "model") entry.model = v;
+      else if (k === "apiFormat" || k === "format") {
+        const f = v.trim().toLowerCase();
+        if (
+          f === "chat" ||
+          f === "chat_completions" ||
+          f === "openai_chat"
+        ) {
+          entry.apiFormat = "chat";
+        } else if (
+          f === "responses" ||
+          f === "openai_responses" ||
+          f === "response"
+        ) {
+          entry.apiFormat = "responses";
+        } else {
+          console.log(`未知 apiFormat=${v} · 可用: chat | responses`);
+          return;
+        }
+      }
     }
-    if (!entry.apiKey && !entry.baseUrl && !entry.model) {
-      console.log("至少提供 apiKey= / baseUrl= / model= 之一");
+    if (!entry.apiKey && !entry.baseUrl && !entry.model && !entry.apiFormat) {
+      console.log("至少提供 apiKey= / baseUrl= / model= / apiFormat= 之一");
       return;
     }
     setProviderEntry(kind, entry);
@@ -197,6 +223,9 @@ function cmdConfig(args: string[]) {
     console.log(`   apiKey: ${maskKey(loadConfig().providers[kind]?.apiKey)}`);
     console.log(`   baseUrl: ${loadConfig().providers[kind]?.baseUrl ?? "(默认)"}`);
     console.log(`   model: ${loadConfig().providers[kind]?.model ?? "(默认)"}`);
+    console.log(
+      `   apiFormat: ${loadConfig().providers[kind]?.apiFormat ?? "(chat)"}`,
+    );
     return;
   }
   console.log("用法: maestro config show | path | set <kind> key=val ...");
