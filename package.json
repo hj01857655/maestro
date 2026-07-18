@@ -7,10 +7,15 @@
   "bin": {
     "maestro": "./src/index.ts"
   },
+  "files": [
+    "src",
+    "README.md"
+  ],
   "scripts": {
     "dev": "bun src/index.ts",
-    "start": "bun src/index.ts tui",
+    "start": "bun src/index.ts",
     "tui": "bun src/index.ts tui",
+    "link-cli": "bun link",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },

@@ -79,12 +79,18 @@ maestro/
 # 安装依赖
 bun install
 
-# 启动交互式 TUI（推荐）
-bun run tui
+# 全局安装 CLI（任意目录可敲 maestro，像 claude / codex）
+bun link
 
-# 或者直接使用 CLI
-bun src/index.ts list-roles
+# 启动交互式 TUI
+maestro
+# 或显式
+maestro tui
+# 开发时也可用
+bun run tui
 ```
+
+卸载全局命令：`bun unlink maestro`（在本仓库目录执行 `bun unlink`）。
 
 ### TUI 命令
 
@@ -116,11 +122,13 @@ bun src/index.ts list-roles
 ### CLI
 
 ```bash
-bun src/index.ts validate src/examples/dev-workflow.yaml
-bun src/index.ts plan "实现用户登录" --out .maestro/login.yaml --run --mock
-bun src/index.ts config set claude apiKey=sk-ant-xxx model=claude-sonnet-4-6
-bun src/index.ts config set openai apiKey=sk-xxx model=gpt-5.6-sol apiFormat=responses
-bun src/index.ts config show
+maestro help
+maestro list-roles
+maestro validate src/examples/dev-workflow.yaml
+maestro plan "实现用户登录" --out .maestro/login.yaml --run --mock
+maestro config set claude apiKey=sk-ant-xxx model=claude-sonnet-4-6
+maestro config set openai apiKey=sk-xxx model=gpt-5.6-sol apiFormat=responses
+maestro config show
 ```
 
 配置文件：`~/.maestro/config.json`（优先级：CLI 显式 > 环境变量 > 配置文件 > 默认）。
@@ -135,7 +143,7 @@ export GEMINI_API_KEY=xxx
 export GROK_API_KEY=xxx
 # 或 maestro config set <kind> apiKey=... [apiFormat=chat|responses]
 
-bun src/index.ts run src/examples/dev-workflow.yaml
+maestro run src/examples/dev-workflow.yaml
 ```
 
 默认 baseUrl：

@@ -1,14 +1,17 @@
+#!/usr/bin/env bun
 /**
  * Maestro CLI 入口。
  *
  * 用法:
- *   maestro tui
+ *   maestro                                 启动 TUI（默认）
+ *   maestro tui                             同上
  *   maestro run <workflow.yaml> [--mock]
  *   maestro plan "<需求>" [--mock] [--out file.yaml] [--run]
  *   maestro validate <workflow.yaml>
  *   maestro config [show|set|path]
  *   maestro list-roles
  *   maestro register <kind> <name> <url> <key> [model]
+ *   maestro help | --help | -h
  */
 
 import { Orchestrator } from "./core/orchestrator";
@@ -45,7 +48,8 @@ function printHelp() {
 Maestro 🎼 — 多模型 Agent 编排平台
 
 用法:
-  maestro tui                                 启动交互式终端界面
+  maestro                                     启动交互式终端界面（默认）
+  maestro tui                                 同上
   maestro run <workflow.yaml> [--mock]        运行工作流
   maestro plan "<需求>" [选项]                 从需求生成流水线
       --out <file.yaml>   写出 YAML
@@ -60,10 +64,11 @@ Maestro 🎼 — 多模型 Agent 编排平台
   maestro config set <kind> key=val ...       写入 provider（baseUrl/apiKey/model/apiFormat）
   maestro list-roles                          列出预置角色
   maestro register <kind> <name> <url> <key> [model]  会话内构造（不持久化）
+  maestro help | --help | -h                  显示本帮助
 
 环境变量（优先于配置文件）:
   CLAUDE_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY / GROK_API_KEY
-  *_BASE_URL  *_MODEL
+  *_BASE_URL  *_MODEL  *_API_FORMAT
 
 默认 baseUrl:
   claude  ${DEFAULT_BASE_URLS.claude}
@@ -72,7 +77,7 @@ Maestro 🎼 — 多模型 Agent 编排平台
   grok    ${DEFAULT_BASE_URLS.grok}
 
 示例:
-  maestro tui
+  maestro
   maestro run src/examples/demo-mock.yaml --mock
   maestro plan "实现用户登录" --out .maestro/login.yaml --run --mock
   maestro config set claude apiKey=sk-ant-xxx model=claude-sonnet-4-6
@@ -80,11 +85,21 @@ Maestro 🎼 — 多模型 Agent 编排平台
 `);
 }
 
+async function startTuiOrExplain(): Promise<void> {
+  const { startTui } = await import("./tui");
+  await startTui();
+}
+
 async function main() {
   const args = process.argv.slice(2);
 
+  // 无参数：像 claude / codex 一样直接进 TUI；非 TTY 时打印帮助
   if (args.length === 0) {
-    printHelp();
+    if (process.stdin.isTTY) {
+      await startTuiOrExplain();
+    } else {
+      printHelp();
+    }
     return;
   }
 
@@ -92,8 +107,13 @@ async function main() {
 
   switch (command) {
     case "tui": {
-      const { startTui } = await import("./tui");
-      await startTui();
+      await startTuiOrExplain();
+      break;
+    }
+    case "help":
+    case "--help":
+    case "-h": {
+      printHelp();
       break;
     }
     case "run": {
@@ -121,7 +141,9 @@ async function main() {
       await registerProvider(args.slice(1));
       break;
     default:
+      console.error(`未知命令: ${command}\n`);
       printHelp();
+      process.exitCode = 1;
   }
 }
 
