@@ -122,7 +122,12 @@ bun run tui
 ### CLI
 
 ```bash
+maestro                    # 默认进 TUI
 maestro help
+maestro version
+maestro doctor             # 检查 bun/git/配置/依赖
+maestro update             # git pull + bun install（bun link 安装）
+maestro update --check     # 只检查是否有更新
 maestro list-roles
 maestro validate src/examples/dev-workflow.yaml
 maestro plan "实现用户登录" --out .maestro/login.yaml --run --mock

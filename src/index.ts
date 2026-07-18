@@ -11,6 +11,9 @@
  *   maestro config [show|set|path]
  *   maestro list-roles
  *   maestro register <kind> <name> <url> <key> [model]
+ *   maestro update [--check] [--force]
+ *   maestro doctor
+ *   maestro version | -V | --version
  *   maestro help | --help | -h
  */
 
@@ -38,6 +41,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { stringify as stringifyYaml } from "yaml";
+import {
+  cmdDoctor,
+  cmdUpdate,
+  cmdVersion,
+  formatVersionLine,
+} from "./cli/self";
 
 function log(msg: string) {
   console.log(msg);
@@ -45,7 +54,7 @@ function log(msg: string) {
 
 function printHelp() {
   console.log(`
-Maestro 🎼 — 多模型 Agent 编排平台
+Maestro 🎼 — 多模型 Agent 编排平台  ·  ${formatVersionLine()}
 
 用法:
   maestro                                     启动交互式终端界面（默认）
@@ -64,6 +73,9 @@ Maestro 🎼 — 多模型 Agent 编排平台
   maestro config set <kind> key=val ...       写入 provider（baseUrl/apiKey/model/apiFormat）
   maestro list-roles                          列出预置角色
   maestro register <kind> <name> <url> <key> [model]  会话内构造（不持久化）
+  maestro update [--check] [--force]          从 git 远程更新（bun link 安装）
+  maestro doctor                              检查运行环境 / 配置 / 依赖
+  maestro version | -V | --version            显示版本
   maestro help | --help | -h                  显示本帮助
 
 环境变量（优先于配置文件）:
@@ -78,6 +90,8 @@ Maestro 🎼 — 多模型 Agent 编排平台
 
 示例:
   maestro
+  maestro update
+  maestro doctor
   maestro run src/examples/demo-mock.yaml --mock
   maestro plan "实现用户登录" --out .maestro/login.yaml --run --mock
   maestro config set claude apiKey=sk-ant-xxx model=claude-sonnet-4-6
@@ -114,6 +128,24 @@ async function main() {
     case "--help":
     case "-h": {
       printHelp();
+      break;
+    }
+    case "version":
+    case "--version":
+    case "-V": {
+      cmdVersion();
+      break;
+    }
+    case "update": {
+      const check = args.includes("--check");
+      const force = args.includes("--force");
+      const code = await cmdUpdate({ check, force });
+      process.exitCode = code;
+      break;
+    }
+    case "doctor": {
+      const code = await cmdDoctor();
+      process.exitCode = code;
       break;
     }
     case "run": {
