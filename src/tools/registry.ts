@@ -2,6 +2,7 @@
  * ToolRegistry — 注册与执行 tools。
  */
 
+import type { ResponsesToolDefinition } from "../types";
 import type { Tool, ToolCall, ToolContext, ToolDefinition, ToolResult } from "./types";
 import { BUILTIN_TOOLS } from "./builtin";
 
@@ -26,6 +27,11 @@ export class ToolRegistry {
     return Array.from(this.tools.values()).map((t) => t.definition);
   }
 
+  /** 转为 Provider 原生 function tools（Responses 扁平 / Chat 自动嵌套） */
+  toProviderTools(): ResponsesToolDefinition[] {
+    return this.list().map((d) => toolDefinitionToProvider(d));
+  }
+
   async execute(call: ToolCall, ctx: ToolContext): Promise<ToolResult> {
     const tool = this.tools.get(call.name);
     if (!tool) {
@@ -47,6 +53,32 @@ export class ToolRegistry {
     }
     return tool.execute(call.arguments, ctx);
   }
+}
+
+/** ToolDefinition → 官方 function tool schema */
+export function toolDefinitionToProvider(
+  d: ToolDefinition,
+): ResponsesToolDefinition {
+  const properties: Record<string, unknown> = {};
+  const required: string[] = [];
+  for (const p of d.parameters) {
+    properties[p.name] = {
+      type: p.type,
+      description: p.description,
+    };
+    if (p.required) required.push(p.name);
+  }
+  return {
+    type: "function",
+    name: d.name,
+    description: d.description,
+    parameters: {
+      type: "object",
+      properties,
+      ...(required.length > 0 ? { required } : {}),
+      additionalProperties: false,
+    },
+  };
 }
 
 /** 从模型输出中解析 tool 调用块 */
@@ -108,7 +140,22 @@ function normalizeCall(raw: unknown): ToolCall | null {
   return { name, arguments: args };
 }
 
-/** 注入到 system prompt 的 tool 说明 */
+/** 解析官方 ProviderToolCall.arguments JSON */
+export function parseNativeToolArguments(
+  argumentsJson: string,
+): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(argumentsJson || "{}") as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    return { value: parsed };
+  } catch {
+    return { _raw: argumentsJson };
+  }
+}
+
+/** 注入到 system prompt 的 tool 说明（markdown ```tool 回落路径） */
 export function toolsPromptSection(defs: ToolDefinition[]): string {
   if (defs.length === 0) return "";
   const lines = [
@@ -127,5 +174,22 @@ export function toolsPromptSection(defs: ToolDefinition[]): string {
     if (params) lines.push(`  参数: ${params}`);
   }
   lines.push("", "工具结果会回传给你；拿到结果后再继续回答。不要编造工具输出。");
+  return lines.join("\n");
+}
+
+/** 原生 function calling 提示（不再要求 ```tool 块） */
+export function nativeToolsPromptSection(defs: ToolDefinition[]): string {
+  if (defs.length === 0) return "";
+  const lines = [
+    "你可以使用官方 function calling 调用本地工具。",
+    "需要读文件、写文件、列目录或执行命令时，请通过 tools 发起 function call，不要编造工具输出。",
+    "可用工具：",
+  ];
+  for (const d of defs) {
+    const params = d.parameters
+      .map((p) => `${p.name}${p.required ? "*" : ""}: ${p.type}`)
+      .join(", ");
+    lines.push(`- ${d.name}: ${d.description}${params ? ` (${params})` : ""}`);
+  }
   return lines.join("\n");
 }

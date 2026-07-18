@@ -3,16 +3,26 @@
  *
  * Agent = 角色定义 + 模型 Provider + System Prompt。
  * Researcher + Grok：自动走 live search（search_parameters）。
- * 可选 Tool 循环：解析 ```tool 块 → 执行 → 回灌。
+ * Tool 循环：
+ *   1) 原生 function calling（ProviderResult.toolCalls）优先
+ *   2) 回落 markdown ```tool 块（兼容非原生 / Mock）
  */
 
 import { BaseProvider } from "../providers/base";
 import { GrokProvider } from "../providers/grok";
-import type { AgentConfig, Message, ProviderResult } from "../types";
+import type {
+  AgentConfig,
+  Message,
+  ProviderInvokeOptions,
+  ProviderResult,
+  ProviderToolCall,
+} from "../types";
 import {
   ToolRegistry,
   parseToolCalls,
+  parseNativeToolArguments,
   toolsPromptSection,
+  nativeToolsPromptSection,
   type ToolContext,
 } from "../tools";
 
@@ -21,6 +31,13 @@ export interface AgentRunOptions {
   extraPrompt?: string;
   /** 启用 tools（默认 false；coder/tester 可开） */
   tools?: boolean;
+  /**
+   * tool 调用模式：
+   * - native（默认）：走官方 function calling，失败/无 toolCalls 时回落 markdown
+   * - markdown：仅 ```tool 块
+   * - auto：同 native
+   */
+  toolMode?: "native" | "markdown" | "auto";
   /** tool 最大轮次 */
   maxToolRounds?: number;
   /** tool 上下文 */
@@ -35,6 +52,7 @@ export interface AgentRunOptions {
     args: Record<string, unknown>;
     result: string;
     ok: boolean;
+    callId?: string;
   }) => void;
 }
 
@@ -77,8 +95,15 @@ export class Agent {
       (opts.extraPrompt ? `\n\n${opts.extraPrompt}` : "");
 
     const useTools = opts.tools ?? this.defaultToolsEnabled();
+    const toolMode = opts.toolMode ?? "native";
+    const useNative = useTools && toolMode !== "markdown";
+
     if (useTools) {
-      systemPrompt += "\n\n" + toolsPromptSection(this.tools.list());
+      systemPrompt +=
+        "\n\n" +
+        (useNative
+          ? nativeToolsPromptSection(this.tools.list())
+          : toolsPromptSection(this.tools.list()));
     }
 
     const fullMessages: Message[] = [
@@ -86,7 +111,7 @@ export class Agent {
       ...messages,
     ];
 
-    const invokeOpts = {
+    const invokeOpts: ProviderInvokeOptions = {
       temperature: this.config.temperature,
       maxTokens: this.config.maxTokens,
     };
@@ -104,7 +129,7 @@ export class Agent {
     }
 
     if (useTools) {
-      return this.runWithTools(fullMessages, invokeOpts, opts);
+      return this.runWithTools(fullMessages, invokeOpts, opts, useNative);
     }
 
     if (opts.stream) {
@@ -117,7 +142,7 @@ export class Agent {
   /** 流式调用；仅在 provider 不支持流式时回落 invoke */
   private async runStream(
     messages: Message[],
-    invokeOpts: { temperature?: number; maxTokens?: number },
+    invokeOpts: ProviderInvokeOptions,
     onStream?: (delta: string) => void,
   ): Promise<ProviderResult> {
     try {
@@ -145,8 +170,9 @@ export class Agent {
 
   private async runWithTools(
     messages: Message[],
-    invokeOpts: { temperature?: number; maxTokens?: number },
+    invokeOpts: ProviderInvokeOptions,
     opts: AgentRunOptions,
+    useNative: boolean,
   ): Promise<ProviderResult> {
     const maxRounds = opts.maxToolRounds ?? 4;
     const ctx: ToolContext = {
@@ -157,13 +183,47 @@ export class Agent {
 
     const history = [...messages];
     let last: ProviderResult | undefined;
+    let lastResponseId: string | undefined;
+
+    const providerTools = useNative ? this.tools.toProviderTools() : undefined;
 
     for (let round = 0; round < maxRounds; round++) {
-      last = await this.provider.invoke(history, invokeOpts);
+      const roundOpts: ProviderInvokeOptions = {
+        ...invokeOpts,
+        ...(providerTools && providerTools.length > 0
+          ? {
+              tools: providerTools,
+              toolChoice: "auto",
+              parallelToolCalls: true,
+            }
+          : {}),
+        // responses 续聊：有 responseId 时带上
+        ...(lastResponseId
+          ? { previousResponseId: lastResponseId }
+          : {}),
+      };
+
+      last = await this.provider.invoke(history, roundOpts);
+      if (last.responseId) lastResponseId = last.responseId;
+
+      // 1) 原生 toolCalls 优先
+      if (useNative && last.toolCalls && last.toolCalls.length > 0) {
+        history.push({
+          role: "assistant",
+          content: last.content ?? "",
+          toolCalls: last.toolCalls,
+        });
+
+        for (const tc of last.toolCalls) {
+          await this.executeNativeTool(tc, ctx, history, opts);
+        }
+        continue;
+      }
+
+      // 2) markdown ```tool 回落
       const calls = parseToolCalls(last.content);
       if (calls.length === 0) return last;
 
-      // 把模型回复写入 history
       history.push({ role: "assistant", content: last.content });
 
       const resultBlocks: string[] = [];
@@ -196,6 +256,33 @@ export class Agent {
         provider: this.provider.kind,
       }
     );
+  }
+
+  private async executeNativeTool(
+    tc: ProviderToolCall,
+    ctx: ToolContext,
+    history: Message[],
+    opts: AgentRunOptions,
+  ): Promise<void> {
+    const args = parseNativeToolArguments(tc.arguments);
+    const result = await this.tools.execute(
+      { name: tc.name, arguments: args },
+      ctx,
+    );
+    opts.onTool?.({
+      name: tc.name,
+      args,
+      result: result.content.slice(0, 500),
+      ok: result.ok,
+      callId: tc.callId,
+    });
+    history.push({
+      role: "tool",
+      content: result.content.slice(0, 32_000),
+      callId: tc.callId,
+      toolOutput: result.content.slice(0, 32_000),
+      name: tc.name,
+    });
   }
 
   /** researcher 角色默认开搜索；可被 config 扩展覆盖 */
