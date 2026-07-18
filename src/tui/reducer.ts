@@ -265,6 +265,12 @@ export function reduce(state: TuiState, action: TuiAction): TuiState {
         statusLine:
           state.mode === "running" ? state.statusLine : "就绪 · 输入 /help",
       };
+    case "session/bind":
+      return {
+        ...state,
+        sessionId: action.sessionId,
+        sessionName: action.sessionName ?? state.sessionName,
+      };
     case "quit":
       return state;
     default:

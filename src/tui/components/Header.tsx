@@ -31,6 +31,12 @@ export function Header({ state }: Props) {
           ? "red"
           : "gray";
 
+  const sessionLabel = state.sessionId
+    ? state.sessionName
+      ? `${state.sessionId.slice(0, 8)} "${state.sessionName}"`
+      : state.sessionId.slice(0, 8)
+    : null;
+
   return (
     <Box
       borderStyle="round"
@@ -42,7 +48,9 @@ export function Header({ state }: Props) {
       <Text bold color="magenta">
         🎼 Maestro
       </Text>
-      <Text color="gray"> multi-model agent orchestrator </Text>
+      <Text color="gray">
+        {sessionLabel ? ` session ${sessionLabel} ` : " multi-model orchestrator "}
+      </Text>
       <Box>
         {state.mock && (
           <Text color="yellow" bold>

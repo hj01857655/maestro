@@ -220,6 +220,32 @@ export const builtinCommands: SlashCommand[] = [
     }),
   },
   {
+    name: "session",
+    aliases: ["sessions"],
+    description: "显示当前会话信息",
+    usage: "/session",
+    allowWhileRunning: true,
+    run: ({ state }) => {
+      const lines = [
+        `session: ${state.sessionId ?? "(none)"}${state.sessionName ? ` "${state.sessionName}"` : ""}`,
+        `workflow: ${state.workflowName || "(none)"}`,
+        `cwd: ${process.cwd()}`,
+        "CLI: maestro sessions · maestro -c · maestro -r <id>",
+      ];
+      return {
+        kind: "actions",
+        actions: [
+          ...lines.map(
+            (message) =>
+              ({ type: "logs/push", level: "info" as const, message }) as const,
+          ),
+          { type: "status/set", statusLine: "session" },
+          { type: "help/hide" },
+        ],
+      };
+    },
+  },
+  {
     name: "show",
     description: "查看 step 完整输出",
     usage: "/show [step名]",

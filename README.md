@@ -105,6 +105,7 @@ bun run tui
 /show close                        关闭预览
 /stop                              取消当前工作流
 /clear                             清空日志
+/session                          当前会话信息
 /quit                              退出
 ```
 
@@ -128,6 +129,22 @@ maestro version
 maestro doctor             # 检查 bun/git/配置/依赖
 maestro update             # git pull + bun install（bun link 安装）
 maestro update --check     # 只检查是否有更新
+
+# 会话（对齐 claude -c / -r）
+maestro -c                 # continue：当前目录最近会话
+maestro -r [id|query]      # resume
+maestro continue
+maestro resume <id>
+maestro sessions           # 列出当前目录会话
+maestro sessions --all
+maestro sessions show <id>
+maestro sessions rm <id>
+
+# 非交互 print（对齐 claude -p）
+maestro -p "写一个 hello" --role coder --mock
+maestro -p "总结 diff" --output-format json
+maestro print "..." --model gpt-x
+
 maestro list-roles
 maestro validate src/examples/dev-workflow.yaml
 maestro plan "实现用户登录" --out .maestro/login.yaml --run --mock
@@ -135,6 +152,8 @@ maestro config set claude apiKey=sk-ant-xxx model=claude-sonnet-4-6
 maestro config set openai apiKey=sk-xxx model=gpt-5.6-sol apiFormat=responses
 maestro config show
 ```
+
+会话落盘：`~/.maestro/sessions/<id>.json`。
 
 配置文件：`~/.maestro/config.json`（优先级：CLI 显式 > 环境变量 > 配置文件 > 默认）。
 

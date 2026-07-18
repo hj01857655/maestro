@@ -16,7 +16,7 @@
  * └──────────────────────────────────────────┘
  */
 
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -29,7 +29,7 @@ import { RolesPanel } from "./components/RolesPanel";
 import { CommandInput } from "./components/CommandInput";
 import { SlashDropdown } from "./components/SlashDropdown";
 import { InspectPanel } from "./components/InspectPanel";
-import { createInitialState, type StepUiState, type TuiState } from "./state";
+import { createInitialState, type StepUiState, type TuiBootstrap, type TuiState } from "./state";
 import { reduce } from "./reducer";
 import type { TuiAction, TuiEffect } from "./actions";
 import { CommandRegistry, parseSlashLine, builtinCommands } from "./slash";
@@ -44,18 +44,84 @@ import { createProvider, apiKeyEnvName } from "../providers";
 import { loadConfig } from "../config/store";
 import { BUILTIN_ROLES } from "../roles";
 import type { ProviderKind, WorkflowConfig } from "../types";
+import {
+  createSession,
+  saveSession,
+  touchSession,
+  type SessionRecord,
+} from "../session";
 
 const registry = new CommandRegistry();
 registry.registerAll(builtinCommands);
 
-export function App() {
+export interface AppProps {
+  bootstrap?: TuiBootstrap;
+  /** 已有会话则续；否则新建 */
+  session?: SessionRecord;
+}
+
+export function App({ bootstrap, session: initialSession }: AppProps = {}) {
   const { exit } = useApp();
-  const [state, setState] = useState<TuiState>(createInitialState);
+  const [state, setState] = useState<TuiState>(() =>
+    createInitialState(bootstrap),
+  );
   const abortRef = useRef<AbortController | null>(null);
   const orchRef = useRef<Orchestrator | null>(null);
   // 用 ref 读最新 state，避免 useInput 闭包过期
   const stateRef = useRef(state);
   stateRef.current = state;
+
+  // 会话：启动时绑定；全程用 ref 持有最新 record
+  const sessionRef = useRef<SessionRecord | null>(initialSession ?? null);
+  if (!sessionRef.current) {
+    const s = createSession({
+      kind: "tui",
+      name: bootstrap?.sessionName,
+      mock: bootstrap?.mock,
+    });
+    if (bootstrap?.sessionId) s.id = bootstrap.sessionId;
+    sessionRef.current = s;
+    saveSession(s);
+  }
+
+  const persistSession = useCallback((patch: Partial<SessionRecord> = {}) => {
+    const cur = sessionRef.current;
+    if (!cur) return;
+    const next = touchSession(cur, {
+      ...patch,
+      commandHistory: stateRef.current.commandHistory,
+      logs: stateRef.current.logs.slice(-50).map((l) => ({
+        time: l.time,
+        level: l.level,
+        message: l.message,
+      })),
+      steps: stateRef.current.steps.map((s) => ({
+        name: s.name,
+        agent: s.agent,
+        status: s.status,
+        summary: s.summary,
+        error: s.error,
+        attempts: s.attempts,
+      })),
+      workflowName: stateRef.current.workflowName || cur.workflowName,
+      mock: stateRef.current.mock,
+    });
+    sessionRef.current = next;
+  }, []);
+
+  // 首次挂载：确保 state 有 sessionId
+  useEffect(() => {
+    const s = sessionRef.current;
+    if (s && stateRef.current.sessionId !== s.id) {
+      setState((st) =>
+        reduce(st, {
+          type: "session/bind",
+          sessionId: s.id,
+          sessionName: s.name,
+        }),
+      );
+    }
+  }, []);
 
   const dispatch = useCallback((action: TuiAction) => {
     setState((s) => reduce(s, action));
@@ -92,6 +158,17 @@ export function App() {
         mock: isMock,
         stepDeps,
       });
+
+      // 会话：记录工作流
+      if (sessionRef.current) {
+        sessionRef.current = touchSession(sessionRef.current, {
+          status: "active",
+          lastRequest: request,
+          lastWorkflow: config,
+          workflowName: config.name,
+          mock: isMock,
+        });
+      }
 
       const abort = new AbortController();
       abortRef.current = abort;
@@ -170,15 +247,43 @@ export function App() {
         );
 
         const cancelled = result.error === "cancelled";
+        const finishStatus = cancelled
+          ? "cancelled"
+          : result.status === "completed"
+            ? "completed"
+            : "failed";
         dispatch({
           type: "workflow/finished",
-          status: cancelled
-            ? "cancelled"
-            : result.status === "completed"
-              ? "completed"
-              : "failed",
+          status: finishStatus,
           durationMs: Date.now() - startedAt,
         });
+
+        // 等 state 更新后 persist — 用 result 直接写
+        if (sessionRef.current) {
+          const stepSnaps = [...result.stepStates.entries()].map(
+            ([name, st]) => ({
+              name,
+              agent:
+                config.steps.find((s) => s.name === name)?.agent ?? "?",
+              status: st.status,
+              summary:
+                typeof st.result === "string"
+                  ? st.result.slice(0, 200)
+                  : undefined,
+              error: st.error,
+              attempts: st.attempts,
+            }),
+          );
+          sessionRef.current = touchSession(sessionRef.current, {
+            status: finishStatus === "completed" ? "completed" : finishStatus === "cancelled" ? "cancelled" : "failed",
+            artifactDir: orch.artifactDir,
+            steps: stepSnaps,
+            lastWorkflow: config,
+            lastRequest: request,
+            workflowName: config.name,
+            mock: isMock,
+          });
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         dispatchMany([
@@ -190,12 +295,20 @@ export function App() {
           },
           { type: "status/set", statusLine: `错误: ${message}` },
         ]);
+        if (sessionRef.current) {
+          sessionRef.current = touchSession(sessionRef.current, {
+            status: "failed",
+            note: message,
+          });
+        }
       } finally {
         abortRef.current = null;
         orchRef.current = null;
+        // 退出前再刷一次 history
+        persistSession();
       }
     },
-    [dispatch, dispatchMany, onOrchestratorEvent],
+    [dispatch, dispatchMany, onOrchestratorEvent, persistSession],
   );
 
   const runWorkflow = useCallback(
@@ -278,13 +391,14 @@ export function App() {
         case "exit":
           abortRef.current?.abort();
           orchRef.current?.cancel();
+          persistSession({ status: "idle" });
           exit();
           break;
         case "none":
           break;
       }
     },
-    [exit, runWorkflow, planAndRun],
+    [exit, runWorkflow, planAndRun, persistSession],
   );
 
   const slashMatches = useMemo(() => {
@@ -310,7 +424,11 @@ export function App() {
         { type: "slash/close" },
       ]);
 
+      // 异步落盘命令历史
+      queueMicrotask(() => persistSession());
+
       if (line === "q") {
+        persistSession({ status: "idle" });
         runEffect({ type: "exit" });
         return;
       }
@@ -368,7 +486,7 @@ export function App() {
         return next;
       });
     },
-    [dispatch, dispatchMany, runEffect],
+    [dispatch, dispatchMany, runEffect, persistSession],
   );
 
   useInput((inputKey, key) => {

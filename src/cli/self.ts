@@ -437,6 +437,14 @@ export async function cmdDoctor(): Promise<number> {
   const cfgPath = configPath();
   console.log(`  path: ${cfgPath}`);
   console.log(`  exists: ${fs.existsSync(cfgPath) ? "yes" : "no"}`);
+  const sessionsPath = path.join(
+    process.env.HOME || process.env.USERPROFILE || "",
+    ".maestro",
+    "sessions",
+  );
+  console.log(
+    `  sessions: ${fs.existsSync(sessionsPath) ? sessionsPath : `${sessionsPath} (empty)`}`,
+  );
   const cfg = loadConfig();
   for (const kind of PROVIDER_KINDS) {
     const e = cfg.providers[kind];

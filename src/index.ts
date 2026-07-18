@@ -5,6 +5,10 @@
  * 用法:
  *   maestro                                 启动 TUI（默认）
  *   maestro tui                             同上
+ *   maestro -c / --continue                 续当前目录最近会话
+ *   maestro -r / --resume [id]              恢复会话
+ *   maestro -p / --print "prompt"           非交互单次调用
+ *   maestro sessions …                      列出会话
  *   maestro run <workflow.yaml> [--mock]
  *   maestro plan "<需求>" [--mock] [--out file.yaml] [--run]
  *   maestro validate <workflow.yaml>
@@ -47,9 +51,25 @@ import {
   cmdVersion,
   formatVersionLine,
 } from "./cli/self";
+import { parseGlobalArgs } from "./cli/args";
+import { runPrint, readStdinText } from "./cli/print";
+import {
+  cmdSessions,
+  printResumeHint,
+  resolveResumeTarget,
+} from "./cli/sessions";
+import {
+  createSession,
+  saveSession,
+  touchSession,
+} from "./session";
 
 function log(msg: string) {
   console.log(msg);
+}
+
+function debugLog(verbose: boolean, msg: string) {
+  if (verbose) console.error(`[maestro] ${msg}`);
 }
 
 function printHelp() {
@@ -59,6 +79,16 @@ Maestro 🎼 — 多模型 Agent 编排平台  ·  ${formatVersionLine()}
 用法:
   maestro                                     启动交互式终端界面（默认）
   maestro tui                                 同上
+  maestro -c, --continue                      续当前目录最近会话
+  maestro -r, --resume [id|query]             恢复会话（进 TUI）
+  maestro -p, --print [prompt] [选项]         非交互单次调用并退出
+      --role|--agent <role>   角色（默认 coder）
+      --model <model>         覆盖模型
+      --output-format text|json
+      --mock                  模拟响应
+      -d, --verbose           调试日志
+  maestro sessions [list|show|rm|path]        会话管理
+  maestro continue | resume [id]              同 -c / -r
   maestro run <workflow.yaml> [--mock]        运行工作流
   maestro plan "<需求>" [选项]                 从需求生成流水线
       --out <file.yaml>   写出 YAML
@@ -78,6 +108,12 @@ Maestro 🎼 — 多模型 Agent 编排平台  ·  ${formatVersionLine()}
   maestro version | -V | --version            显示版本
   maestro help | --help | -h                  显示本帮助
 
+全局旗标（多数命令可用）:
+  -n, --name <name>     会话显示名
+  --model <model>       覆盖模型（print / 部分路径）
+  --mock                模拟响应
+  -d, --verbose         调试日志到 stderr
+
 环境变量（优先于配置文件）:
   CLAUDE_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY / GROK_API_KEY
   *_BASE_URL  *_MODEL  *_API_FORMAT
@@ -90,6 +126,10 @@ Maestro 🎼 — 多模型 Agent 编排平台  ·  ${formatVersionLine()}
 
 示例:
   maestro
+  maestro -c
+  maestro -r abc123
+  maestro -p "写一个 hello world" --role coder --mock
+  maestro sessions
   maestro update
   maestro doctor
   maestro run src/examples/demo-mock.yaml --mock
@@ -99,29 +139,173 @@ Maestro 🎼 — 多模型 Agent 编排平台  ·  ${formatVersionLine()}
 `);
 }
 
-async function startTuiOrExplain(): Promise<void> {
+async function startTuiOrExplain(opts: {
+  session?: import("./session").SessionRecord;
+  name?: string;
+  mock?: boolean;
+} = {}): Promise<void> {
   const { startTui } = await import("./tui");
-  await startTui();
+  await startTui(opts);
+}
+
+async function handleResumeContinue(opts: {
+  continue?: boolean;
+  resume?: boolean | string;
+  name?: string;
+  mock?: boolean;
+  verbose?: boolean;
+}): Promise<number> {
+  const resolved = resolveResumeTarget({
+    continue: opts.continue,
+    resume: opts.resume,
+  });
+  if (resolved.error) {
+    console.error(`❌ ${resolved.error}`);
+    if (resolved.ambiguous?.length) {
+      for (const s of resolved.ambiguous) {
+        console.error(
+          `  ${s.id}${s.name ? ` "${s.name}"` : ""}  ${s.status}  ${s.updatedAt.slice(0, 19)}  ${s.workflowName ?? ""}`,
+        );
+      }
+    }
+    return 1;
+  }
+  if (!resolved.session) {
+    console.error("❌ 没有可恢复的会话");
+    return 1;
+  }
+  printResumeHint(resolved.session);
+  debugLog(Boolean(opts.verbose), `resume session=${resolved.session.id}`);
+  await startTuiOrExplain({
+    session: resolved.session,
+    name: opts.name,
+    mock: opts.mock ?? resolved.session.mock,
+  });
+  return 0;
 }
 
 async function main() {
-  const args = process.argv.slice(2);
+  let global;
+  try {
+    global = parseGlobalArgs(process.argv.slice(2));
+  } catch (err) {
+    console.error(`❌ ${err instanceof Error ? err.message : err}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const args = global.rest;
+  debugLog(global.verbose, `argv rest=${JSON.stringify(args)} flags=${JSON.stringify({
+    continue: global.continue,
+    resume: global.resume,
+    print: global.print,
+    mock: global.mock,
+    model: global.model,
+    name: global.name,
+    role: global.role,
+  })}`);
+
+  // -p / --print 优先（可无子命令）
+  if (global.print) {
+    let prompt = global.printPrompt ?? "";
+    if (!prompt) prompt = await readStdinText();
+    const code = await runPrint({
+      prompt,
+      role: global.role,
+      model: global.model,
+      mock: global.mock,
+      verbose: global.verbose,
+      outputFormat: global.outputFormat,
+      name: global.name,
+    });
+    process.exitCode = code;
+    return;
+  }
+
+  // -c / -r 无子命令时直接 resume
+  if ((global.continue || global.resume) && args.length === 0) {
+    const code = await handleResumeContinue({
+      continue: global.continue,
+      resume: global.resume,
+      name: global.name,
+      mock: global.mock,
+      verbose: global.verbose,
+    });
+    process.exitCode = code;
+    return;
+  }
 
   // 无参数：像 claude / codex 一样直接进 TUI；非 TTY 时打印帮助
   if (args.length === 0) {
     if (process.stdin.isTTY) {
-      await startTuiOrExplain();
+      await startTuiOrExplain({ name: global.name, mock: global.mock });
     } else {
       printHelp();
     }
     return;
   }
 
-  const command = args[0];
+  const command = args[0]!;
 
   switch (command) {
     case "tui": {
-      await startTuiOrExplain();
+      // tui 也可带 -c/-r（若之前没被全局吃掉）
+      if (global.continue || global.resume) {
+        const code = await handleResumeContinue({
+          continue: global.continue,
+          resume: global.resume,
+          name: global.name,
+          mock: global.mock,
+          verbose: global.verbose,
+        });
+        process.exitCode = code;
+      } else {
+        await startTuiOrExplain({ name: global.name, mock: global.mock });
+      }
+      break;
+    }
+    case "continue": {
+      const code = await handleResumeContinue({
+        continue: true,
+        name: global.name,
+        mock: global.mock,
+        verbose: global.verbose,
+      });
+      process.exitCode = code;
+      break;
+    }
+    case "resume": {
+      const ref = args[1];
+      const code = await handleResumeContinue({
+        resume: ref ?? true,
+        name: global.name,
+        mock: global.mock,
+        verbose: global.verbose,
+      });
+      process.exitCode = code;
+      break;
+    }
+    case "print":
+    case "ask": {
+      const prompt =
+        args.slice(1).filter((a) => !a.startsWith("--")).join(" ").trim() ||
+        global.printPrompt ||
+        (await readStdinText());
+      const code = await runPrint({
+        prompt,
+        role: global.role,
+        model: global.model,
+        mock: global.mock || args.includes("--mock"),
+        verbose: global.verbose,
+        outputFormat: global.outputFormat,
+        name: global.name,
+      });
+      process.exitCode = code;
+      break;
+    }
+    case "sessions":
+    case "session": {
+      process.exitCode = cmdSessions(args.slice(1));
       break;
     }
     case "help":
@@ -149,13 +333,20 @@ async function main() {
       break;
     }
     case "run": {
-      const isMock = args.includes("--mock");
+      const isMock = global.mock || args.includes("--mock");
       const wfPath = args.slice(1).find((a) => !a.startsWith("--"));
-      await runWorkflow(wfPath, isMock);
+      await runWorkflow(wfPath, isMock, "CLI 任务", {
+        name: global.name,
+        verbose: global.verbose,
+      });
       break;
     }
     case "plan": {
-      await cmdPlan(args.slice(1));
+      await cmdPlan(args.slice(1), {
+        name: global.name,
+        mock: global.mock,
+        verbose: global.verbose,
+      });
       break;
     }
     case "validate": {
@@ -297,11 +488,14 @@ function redactConfig(cfg: MaestroConfig): MaestroConfig {
   return { ...cfg, providers };
 }
 
-async function cmdPlan(args: string[]) {
+async function cmdPlan(
+  args: string[],
+  g: { name?: string; mock?: boolean; verbose?: boolean } = {},
+) {
   const requestParts: string[] = [];
   let outFile: string | undefined;
   let doRun = false;
-  let isMock = false;
+  let isMock = Boolean(g.mock);
   let research = true;
   let test = false;
   let useLlm = false;
@@ -384,9 +578,15 @@ async function cmdPlan(args: string[]) {
 
   if (doRun) {
     if (outFile) {
-      await runWorkflow(outFile, isMock, request);
+      await runWorkflow(outFile, isMock, request, {
+        name: g.name,
+        verbose: g.verbose,
+      });
     } else {
-      await runWorkflowConfig(config, isMock, request);
+      await runWorkflowConfig(config, isMock, request, {
+        name: g.name,
+        verbose: g.verbose,
+      });
     }
   }
 }
@@ -431,6 +631,7 @@ async function runWorkflow(
   workflowPath: string | undefined,
   isMock: boolean,
   request = "CLI 任务",
+  g: { name?: string; verbose?: boolean } = {},
 ) {
   if (!workflowPath) {
     console.log("请指定工作流文件路径");
@@ -456,18 +657,32 @@ async function runWorkflow(
     return;
   }
 
-  await runWorkflowConfig(validated.config, isMock, request);
+  await runWorkflowConfig(validated.config, isMock, request, g);
 }
 
 async function runWorkflowConfig(
   config: WorkflowConfig,
   isMock: boolean,
   request: string,
+  g: { name?: string; verbose?: boolean } = {},
 ) {
   console.log(`\n📄 加载工作流: ${config.name}`);
   if (isMock) {
     console.log(`   🎭 Mock 模式 — 所有模型使用模拟响应\n`);
   }
+
+  const session = createSession({
+    kind: "cli",
+    name: g.name,
+    mock: isMock,
+    lastRequest: request,
+  });
+  session.workflowName = config.name;
+  session.lastWorkflow = config;
+  session.status = "active";
+  saveSession(session);
+  debugLog(Boolean(g.verbose), `session=${session.id}`);
+  console.log(`   🧾 session: ${session.id}${g.name ? ` "${g.name}"` : ""}`);
 
   const fileCfg = loadConfig();
   const orchestrator = new Orchestrator({
@@ -533,12 +748,37 @@ async function runWorkflowConfig(
     mock: isMock,
   });
 
+  const finish =
+    result.error === "cancelled"
+      ? "cancelled"
+      : result.status === "completed"
+        ? "completed"
+        : "failed";
+  touchSession(session, {
+    status: finish,
+    artifactDir: orchestrator.artifactDir,
+    workflowName: config.name,
+    lastWorkflow: config,
+    lastRequest: request,
+    mock: isMock,
+    steps: [...result.stepStates.entries()].map(([name, st]) => ({
+      name,
+      agent: config.steps.find((s) => s.name === name)?.agent ?? "?",
+      status: st.status,
+      summary:
+        typeof st.result === "string" ? st.result.slice(0, 200) : undefined,
+      error: st.error,
+      attempts: st.attempts,
+    })),
+  });
+
   console.log("\n📊 执行摘要:");
   console.log(`   状态: ${result.status}`);
   console.log(
     `   耗时: ${(((result.completedAt ?? Date.now()) - result.startedAt) / 1000).toFixed(1)}s`,
   );
   console.log(`   步骤: ${result.stepStates.size} 个`);
+  console.log(`   会话: ${session.id}`);
   if (orchestrator.artifactDir) {
     console.log(`   产物: ${orchestrator.artifactDir}`);
   }

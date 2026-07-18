@@ -49,25 +49,47 @@ export interface TuiState {
   slashSelected: number;
   /** /show 查看的 step 名；null 关闭 */
   inspectStep: string | null;
+  /** 会话 id（~/.maestro/sessions） */
+  sessionId?: string;
+  /** 会话显示名 */
+  sessionName?: string;
 }
 
-export function createInitialState(): TuiState {
+export interface TuiBootstrap {
+  sessionId?: string;
+  sessionName?: string;
+  commandHistory?: string[];
+  statusLine?: string;
+  mock?: boolean;
+  workflowName?: string;
+  logs?: LogEntry[];
+  steps?: StepUiState[];
+  stepDeps?: Record<string, string[]>;
+}
+
+export function createInitialState(boot?: TuiBootstrap): TuiState {
   return {
     mode: "idle",
-    workflowName: "",
-    steps: [],
-    stepDeps: {},
-    logs: [],
-    statusLine: "就绪 · 输入 /help 查看命令",
-    mock: false,
+    workflowName: boot?.workflowName ?? "",
+    steps: boot?.steps ?? [],
+    stepDeps: boot?.stepDeps ?? {},
+    logs: boot?.logs ?? [],
+    statusLine:
+      boot?.statusLine ??
+      (boot?.sessionId
+        ? `会话 ${boot.sessionId}${boot.sessionName ? ` "${boot.sessionName}"` : ""} · /help`
+        : "就绪 · 输入 /help 查看命令"),
+    mock: boot?.mock ?? false,
     input: "",
     showHelp: false,
-    commandHistory: [],
+    commandHistory: boot?.commandHistory ?? [],
     historyIndex: -1,
     slashOpen: false,
     slashQuery: "",
     slashSelected: 0,
     inspectStep: null,
+    sessionId: boot?.sessionId,
+    sessionName: boot?.sessionName,
   };
 }
 

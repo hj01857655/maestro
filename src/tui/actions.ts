@@ -37,6 +37,11 @@ export type TuiAction =
   | { type: "slash/accept"; name: string; keepOpen?: boolean }
   | { type: "inspect/open"; step: string }
   | { type: "inspect/close" }
+  | {
+      type: "session/bind";
+      sessionId: string;
+      sessionName?: string;
+    }
   | { type: "quit" };
 
 /** Effect — 由 reduce 产出，交给 effect runner 执行（异步/IO） */
