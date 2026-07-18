@@ -82,6 +82,13 @@ export type TuiEffect =
   | { type: "plan-and-run"; request: string; mock: boolean; test?: boolean }
   | { type: "rerun-last" }
   | { type: "stop-workflow" }
-  | { type: "permission-answer"; allow: boolean }
+  | { type: "permission-answer"; allow: boolean; remember?: "tool" | "path" | "command" }
+  | {
+      type: "permission-always";
+      /** list | clear | tool | path | cmd | deny-path | deny-cmd */
+      op: string;
+      values: string[];
+      save?: boolean;
+    }
   | { type: "exit" }
   | { type: "none" };

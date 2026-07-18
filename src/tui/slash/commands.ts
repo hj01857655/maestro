@@ -10,6 +10,8 @@ import {
   configPath,
   loadConfig,
   maskKey,
+  resolvePermissionRules,
+  setPermissionMode as savePermissionMode,
   setProviderEntry,
 } from "../../config/store";
 import { DEFAULT_BASE_URLS } from "../../providers";
@@ -27,10 +29,10 @@ import type { ProviderKind } from "../../types";
 import {
   PERMISSION_MODE_HELP,
   formatPermissionMode,
+  formatPermissionRules,
   parsePermissionMode,
   type PermissionMode,
 } from "../../permissions";
-import { setPermissionMode as savePermissionMode } from "../../config/store";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -226,20 +228,26 @@ export const builtinCommands: SlashCommand[] = [
   {
     name: "permissions",
     aliases: ["permission", "perm", "mode"],
-    description: "查看/切换权限模式",
+    description: "查看/切换权限模式与规则",
     usage: "/permissions [plan|default|accept-edits|auto] [--save]",
     allowWhileRunning: true,
     run: ({ state, args }) => {
       const save = args.includes("--save") || args.includes("-s");
       const raw = args.find((a) => !a.startsWith("-"));
       if (!raw) {
+        const cfgRules = resolvePermissionRules();
         return infoLines(
           [
             `当前: ${formatPermissionMode(state.permissionMode)}`,
             "",
             PERMISSION_MODE_HELP,
+            "",
+            "配置规则 (permissionRules):",
+            ...formatPermissionRules(cfgRules),
+            "",
             "切换: /permissions plan|default|accept-edits|auto [--save]",
-            "确认: /allow · /deny · y/n",
+            "会话 always: /always list|tool|path|cmd|clear",
+            "确认: /allow · /allow always · /deny · y/n/a",
           ],
           "permissions",
         );
@@ -277,12 +285,34 @@ export const builtinCommands: SlashCommand[] = [
     },
   },
   {
-    name: "allow",
-    aliases: ["yes", "y"],
-    description: "允许当前待确认 tool",
-    usage: "/allow",
+    name: "always",
+    description: "会话 always / 持久规则",
+    usage: "/always [list|tool|path|cmd|clear|deny-path|deny-cmd] [vals...] [--save]",
     allowWhileRunning: true,
-    run: ({ state }) => {
+    run: ({ args }) => {
+      const save = args.includes("--save") || args.includes("-s");
+      const rest = args.filter((a) => !a.startsWith("-"));
+      const op = (rest[0] ?? "list").toLowerCase();
+      const values = rest.slice(1);
+      return {
+        kind: "effect",
+        effect: {
+          type: "permission-always",
+          op,
+          values,
+          save,
+        },
+        actions: [{ type: "help/hide" }],
+      };
+    },
+  },
+  {
+    name: "allow",
+    aliases: ["yes"],
+    description: "允许当前待确认 tool（加 always 记住）",
+    usage: "/allow [always|tool|path|cmd]",
+    allowWhileRunning: true,
+    run: ({ state, args }) => {
       if (!state.pendingPermission) {
         return {
           kind: "message",
@@ -290,16 +320,21 @@ export const builtinCommands: SlashCommand[] = [
           message: "当前无待确认权限",
         };
       }
+      const a0 = (args[0] ?? "").toLowerCase();
+      let remember: "tool" | "path" | "command" | undefined;
+      if (a0 === "always" || a0 === "a" || a0 === "tool") remember = "tool";
+      else if (a0 === "path" || a0 === "p") remember = "path";
+      else if (a0 === "cmd" || a0 === "command" || a0 === "c") remember = "command";
       return {
         kind: "effect",
-        effect: { type: "permission-answer", allow: true },
+        effect: { type: "permission-answer", allow: true, remember },
         actions: [{ type: "help/hide" }],
       };
     },
   },
   {
     name: "deny",
-    aliases: ["no", "n"],
+    aliases: ["no"],
     description: "拒绝当前待确认 tool",
     usage: "/deny",
     allowWhileRunning: true,

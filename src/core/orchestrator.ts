@@ -28,6 +28,7 @@ import {
   normalizePermissionMode,
   type PermissionMode,
   type PermissionAskHandler,
+  type PermissionRules,
 } from "../permissions";
 
 export interface OrchestratorOptions {
@@ -47,6 +48,8 @@ export interface OrchestratorOptions {
   permissionMode?: PermissionMode;
   /** 权限确认回调（default / accept-edits 的 ask 路径） */
   permissionAsk?: PermissionAskHandler;
+  /** 持久/配置权限规则 */
+  permissionRules?: PermissionRules;
   /** 日志回调（兼容旧接口） */
   onLog?: (msg: string) => void;
   /** Step 完成回调（兼容旧接口） */
@@ -79,6 +82,7 @@ export class Orchestrator {
     this.permissions = new PermissionPolicy({
       mode: this.options.permissionMode ?? "auto",
       ask: this.options.permissionAsk,
+      rules: this.options.permissionRules,
     });
     if (options.onEvent) {
       this.listeners.add(options.onEvent);
@@ -94,6 +98,11 @@ export class Orchestrator {
   setPermissionAsk(ask?: PermissionAskHandler): void {
     this.permissions.setAsk(ask);
     this.options.permissionAsk = ask;
+  }
+
+  setPermissionRules(rules?: PermissionRules): void {
+    this.permissions.setBaseRules(rules);
+    this.options.permissionRules = rules;
   }
 
   on(listener: OrchestratorListener): () => void {

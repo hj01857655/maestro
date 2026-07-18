@@ -115,11 +115,13 @@ bun run tui
 /resume [id|query|latest]          加载历史会话
 /export [path]                     导出当前会话摘要 JSON
 /permissions [mode] [--save]       权限模式 plan|default|accept-edits|auto
-/allow · /deny                     确认/拒绝当前 tool（y/n · Esc）
+/allow [always|tool|path|cmd]      确认当前 tool（always=会话记住）
+/deny                              拒绝当前 tool
+/always list|tool|path|cmd|…       会话/持久 always·deny 规则
 /quit                              退出
 ```
 
-快捷键：`Ctrl+C` 运行中取消 / 空闲退出；`↑` `↓` 命令历史或下拉选择；`Tab` 补全；`Esc` 关闭下拉 / 拒绝权限。
+快捷键：`Ctrl+C` 运行中取消 / 空闲退出；`↑` `↓` 命令历史或下拉选择；`Tab` 补全；`Esc` 关闭下拉 / 拒绝权限；待确认时 `y`/`n`/`a`（allow always tool）。
 
 输入 `/` 会弹出 Slash 命令下拉（前缀过滤）。
 
@@ -143,7 +145,51 @@ set MAESTRO_PERMISSION_MODE=accept-edits
 # TUI: /permissions plan --save
 ```
 
-无交互（CLI / CI）下，`default`/`accept-edits` 的「确认」在无 handler 时拒绝。TUI 会弹出确认条，可用 `/allow` `/deny` 或 `y`/`n`。
+无交互（CLI / CI）下，`default`/`accept-edits` 的「确认」在无 handler 时拒绝。TUI 会弹出确认条，可用 `/allow` `/deny` 或 `y`/`n`/`a`。
+
+#### Always / Deny 规则
+
+叠加在 mode 之上（检查顺序：硬拒绝 → plan 风险拒绝 → always → mode → ask）：
+
+| 规则 | 作用 |
+|------|------|
+| `alwaysAllowTools` | 跳过确认（`plan` 下写/执行仍拒绝） |
+| `alwaysAllowPaths` | 路径前缀匹配时跳过确认 |
+| `alwaysAllowCommands` | `run_cmd` 可执行名跳过确认 |
+| `deniedPaths` | 硬拒绝（含 `auto`） |
+| `deniedCommands` | 硬拒绝命令名（含 `auto`） |
+
+```text
+# TUI — 会话级（当前 Orchestrator）
+/allow always                 # 放行并记住该 tool
+/always tool write_file
+/always path src/ tests/
+/always cmd bun git
+/always list
+/always clear
+
+# TUI — 写入 ~/.maestro/config.json → permissionRules
+/always tool write_file --save
+/always deny-path .env secrets/ --save
+/always deny-cmd rm --save
+/always clear --save
+```
+
+配置示例：
+
+```json
+{
+  "version": 1,
+  "permissionMode": "default",
+  "permissionRules": {
+    "alwaysAllowTools": ["write_file"],
+    "alwaysAllowPaths": ["src/", ".maestro/"],
+    "alwaysAllowCommands": ["bun", "git"],
+    "deniedPaths": [".env", "secrets/"],
+    "deniedCommands": ["rm"]
+  }
+}
+```
 
 无需 API Key 的完整演示：
 
@@ -154,6 +200,7 @@ set MAESTRO_PERMISSION_MODE=accept-edits
 /resume latest
 /rerun
 /permissions plan
+/always list
 ```
 
 ### CLI

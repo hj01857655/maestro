@@ -77,6 +77,7 @@ describe("Slash CommandRegistry", () => {
       "export",
       "rerun",
       "permissions",
+      "always",
       "allow",
       "deny",
     ]) {
@@ -115,6 +116,70 @@ describe("Slash CommandRegistry", () => {
     });
     expect(result.kind).toBe("message");
   });
+
+  it("/allow always 在有 pending 时带 remember", () => {
+    const reg = new CommandRegistry();
+    reg.registerAll(builtinCommands);
+    const state = createInitialState();
+    state.pendingPermission = {
+      id: 1,
+      tool: "write_file",
+      risk: "write",
+      summary: "a.ts",
+    };
+    const result = reg.get("allow")!.run({
+      state,
+      args: ["always"],
+      raw: "/allow always",
+    });
+    expect(result.kind).toBe("effect");
+    if (result.kind === "effect") {
+      expect(result.effect).toEqual({
+        type: "permission-answer",
+        allow: true,
+        remember: "tool",
+      });
+    }
+  });
+
+  it("/always tool 产出 permission-always effect", () => {
+    const reg = new CommandRegistry();
+    reg.registerAll(builtinCommands);
+    const result = reg.get("always")!.run({
+      state: createInitialState(),
+      args: ["tool", "write_file", "--save"],
+      raw: "/always tool write_file --save",
+    });
+    expect(result.kind).toBe("effect");
+    if (result.kind === "effect") {
+      expect(result.effect).toEqual({
+        type: "permission-always",
+        op: "tool",
+        values: ["write_file"],
+        save: true,
+      });
+    }
+  });
+
+  it("/always list 默认 op=list", () => {
+    const reg = new CommandRegistry();
+    reg.registerAll(builtinCommands);
+    const result = reg.get("always")!.run({
+      state: createInitialState(),
+      args: [],
+      raw: "/always",
+    });
+    expect(result.kind).toBe("effect");
+    if (result.kind === "effect") {
+      expect(result.effect).toEqual({
+        type: "permission-always",
+        op: "list",
+        values: [],
+        save: false,
+      });
+    }
+  });
+
 
   it("/version 应输出版本信息", () => {
     const reg = new CommandRegistry();

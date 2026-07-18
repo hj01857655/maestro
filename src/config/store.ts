@@ -12,8 +12,10 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { OpenAIApiFormat, ProviderKind } from "../types";
 import {
+  mergePermissionRules,
   normalizePermissionMode,
   type PermissionMode,
+  type PermissionRules,
 } from "../permissions";
 
 export interface ProviderEntry {
@@ -36,6 +38,8 @@ export interface MaestroConfig {
    * 未设置时运行时用 auto（兼容旧行为）
    */
   permissionMode?: PermissionMode;
+  /** 持久权限规则（always / denied） */
+  permissionRules?: PermissionRules;
 }
 
 const CONFIG_VERSION = 1 as const;
@@ -55,6 +59,29 @@ export function defaultConfig(): MaestroConfig {
   };
 }
 
+function sanitizeRules(raw: unknown): PermissionRules | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as PermissionRules;
+  const pick = (v: unknown): string[] | undefined =>
+    Array.isArray(v)
+      ? v.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+      : undefined;
+  const rules = mergePermissionRules({
+    alwaysAllowTools: pick(r.alwaysAllowTools),
+    alwaysAllowPaths: pick(r.alwaysAllowPaths),
+    alwaysAllowCommands: pick(r.alwaysAllowCommands),
+    deniedPaths: pick(r.deniedPaths),
+    deniedCommands: pick(r.deniedCommands),
+  });
+  const empty =
+    !(rules.alwaysAllowTools?.length) &&
+    !(rules.alwaysAllowPaths?.length) &&
+    !(rules.alwaysAllowCommands?.length) &&
+    !(rules.deniedPaths?.length) &&
+    !(rules.deniedCommands?.length);
+  return empty ? undefined : rules;
+}
+
 export function loadConfig(): MaestroConfig {
   const p = configPath();
   if (!fs.existsSync(p)) return defaultConfig();
@@ -68,6 +95,7 @@ export function loadConfig(): MaestroConfig {
       permissionMode: raw.permissionMode
         ? normalizePermissionMode(raw.permissionMode, "auto")
         : undefined,
+      permissionRules: sanitizeRules(raw.permissionRules),
     };
   } catch {
     return defaultConfig();
@@ -84,6 +112,7 @@ export function saveConfig(config: MaestroConfig): string {
     outputDir: config.outputDir,
     maxGlobalRetries: config.maxGlobalRetries,
     permissionMode: config.permissionMode,
+    permissionRules: sanitizeRules(config.permissionRules),
   };
   fs.writeFileSync(p, JSON.stringify(toWrite, null, 2) + "\n", "utf-8");
   return p;
@@ -128,6 +157,22 @@ export function setPermissionMode(mode: PermissionMode): MaestroConfig {
   return cfg;
 }
 
+/** 合并写入持久权限规则 */
+export function setPermissionRules(rules: PermissionRules): MaestroConfig {
+  const cfg = loadConfig();
+  cfg.permissionRules = mergePermissionRules(cfg.permissionRules, rules);
+  saveConfig(cfg);
+  return cfg;
+}
+
+/** 覆盖持久权限规则（传 empty 清空） */
+export function replacePermissionRules(rules: PermissionRules): MaestroConfig {
+  const cfg = loadConfig();
+  cfg.permissionRules = sanitizeRules(rules);
+  saveConfig(cfg);
+  return cfg;
+}
+
 /**
  * 解析运行时权限模式优先级：
  * 显式参数 > env MAESTRO_PERMISSION_MODE > config > auto
@@ -143,6 +188,11 @@ export function resolvePermissionMode(
   const cfg = loadConfig();
   if (cfg.permissionMode) return cfg.permissionMode;
   return "auto";
+}
+
+/** 配置中的权限规则（可能为空对象） */
+export function resolvePermissionRules(): PermissionRules {
+  return mergePermissionRules(loadConfig().permissionRules);
 }
 
 function stripEmpty(entry: ProviderEntry): ProviderEntry {

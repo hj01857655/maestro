@@ -39,6 +39,7 @@ import {
   setProviderEntry,
   maskKey,
   resolvePermissionMode,
+  resolvePermissionRules,
   type MaestroConfig,
 } from "./config/store";
 import type { ProviderKind, WorkflowConfig } from "./types";
@@ -722,10 +723,12 @@ async function runWorkflowConfig(
 
   const fileCfg = loadConfig();
   const permMode = resolvePermissionMode(g.permissionMode);
+  const permRules = resolvePermissionRules();
   const orchestrator = new Orchestrator({
     maxGlobalRetries: config.maxGlobalRetries ?? fileCfg.maxGlobalRetries ?? 1,
     outputDir: config.outputDir ?? fileCfg.outputDir,
     permissionMode: permMode,
+    permissionRules: permRules,
     onLog: log,
   });
   log(`   🔐 permission: ${permMode}`);

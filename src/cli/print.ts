@@ -9,7 +9,11 @@
 import { Agent } from "../core/agent";
 import { createProvider, apiKeyEnvName } from "../providers";
 import { MockProvider } from "../testing/MockProvider";
-import { loadConfig, resolvePermissionMode } from "../config/store";
+import {
+  loadConfig,
+  resolvePermissionMode,
+  resolvePermissionRules,
+} from "../config/store";
 import { BUILTIN_ROLES } from "../roles";
 import type { AgentConfig, ProviderKind, ProviderResult } from "../types";
 import {
@@ -106,7 +110,10 @@ export async function runPrint(opts: PrintOptions): Promise<number> {
       ? String(opts.permissionMode)
       : undefined,
   );
-  const permissions = new PermissionPolicy({ mode: permMode });
+  const permissions = new PermissionPolicy({
+    mode: permMode,
+    rules: resolvePermissionRules(),
+  });
 
   let result: ProviderResult;
   try {

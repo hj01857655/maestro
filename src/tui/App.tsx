@@ -41,7 +41,13 @@ import { validateWorkflowConfig } from "../core/validate";
 import { planFromTemplate } from "../core/planner";
 import { MockProvider } from "../testing/MockProvider";
 import { createProvider, apiKeyEnvName } from "../providers";
-import { loadConfig, resolvePermissionMode } from "../config/store";
+import {
+  loadConfig,
+  resolvePermissionMode,
+  resolvePermissionRules,
+  setPermissionRules as savePermissionRules,
+  replacePermissionRules,
+} from "../config/store";
 import { BUILTIN_ROLES } from "../roles";
 import type { ProviderKind, WorkflowConfig } from "../types";
 import {
@@ -51,8 +57,17 @@ import {
   touchSession,
   type SessionRecord,
 } from "../session";
-import type { PermissionMode, PermissionRequest } from "../permissions";
-import { formatPermissionMode } from "../permissions";
+import type {
+  PermissionAskResult,
+  PermissionMode,
+  PermissionRequest,
+} from "../permissions";
+import {
+  emptyPermissionRules,
+  formatPermissionMode,
+  formatPermissionRules,
+  mergePermissionRules,
+} from "../permissions";
 
 const registry = new CommandRegistry();
 registry.registerAll(builtinCommands);
@@ -89,7 +104,13 @@ export function App({
   // 权限确认队列：default / accept-edits 的 ask 路径
   const permSeq = useRef(0);
   const permWaiters = useRef(
-    new Map<number, { resolve: (v: boolean) => void }>(),
+    new Map<
+      number,
+      {
+        resolve: (v: PermissionAskResult) => void;
+        req: PermissionRequest;
+      }
+    >(),
   );
 
   // 会话：启动时绑定；全程用 ref 持有最新 record
@@ -153,7 +174,7 @@ export function App({
   }, []);
 
   const answerPermission = useCallback(
-    (allow: boolean) => {
+    (allow: boolean, remember?: "tool" | "path" | "command") => {
       const pending = stateRef.current.pendingPermission;
       if (!pending) {
         setState((s) =>
@@ -167,7 +188,11 @@ export function App({
       }
       const waiter = permWaiters.current.get(pending.id);
       if (waiter) {
-        waiter.resolve(allow);
+        const result: PermissionAskResult =
+          allow && remember
+            ? { allow: true, remember }
+            : allow;
+        waiter.resolve(result);
         permWaiters.current.delete(pending.id);
       }
       setState((s) => {
@@ -176,7 +201,7 @@ export function App({
           type: "logs/push",
           level: allow ? "success" : "warn",
           message: allow
-            ? `✅ 已允许 ${pending.tool}`
+            ? `✅ 已允许 ${pending.tool}${remember ? ` · always ${remember}` : ""}`
             : `⛔ 已拒绝 ${pending.tool}`,
         });
         return next;
@@ -205,11 +230,11 @@ export function App({
       reduce(s, {
         type: "logs/push",
         level: "warn",
-        message: `🔐 权限确认 [${req.risk}] ${req.tool}${req.step ? ` @${req.step}` : ""} · ${summary} · /allow 或 /deny`,
+        message: `🔐 权限确认 [${req.risk}] ${req.tool}${req.step ? ` @${req.step}` : ""} · ${summary} · /allow · /allow always · /deny`,
       }),
     );
-    return new Promise<boolean>((resolve) => {
-      permWaiters.current.set(id, { resolve });
+    return new Promise<PermissionAskResult>((resolve) => {
+      permWaiters.current.set(id, { resolve, req });
     });
   }, []);
 
@@ -257,11 +282,13 @@ export function App({
 
       const fileCfg = loadConfig();
       const permMode = stateRef.current.permissionMode ?? resolvePermissionMode();
+      const permRules = resolvePermissionRules();
       const orch = new Orchestrator({
         maxGlobalRetries: config.maxGlobalRetries ?? fileCfg.maxGlobalRetries ?? 1,
         outputDir: config.outputDir ?? fileCfg.outputDir,
         permissionMode: permMode,
         permissionAsk,
+        permissionRules: permRules,
         onEvent: onOrchestratorEvent,
       });
       orchRef.current = orch;
@@ -494,6 +521,159 @@ export function App({
     await executeConfig(s.lastWorkflow, isMock, request);
   }, [dispatch, executeConfig]);
 
+  const handleAlways = useCallback(
+    (op: string, values: string[], save?: boolean) => {
+      const orch = orchRef.current;
+      // 无 orch 时只操作配置 / 提示
+      const lines: string[] = [];
+
+      const ensureOrchSession = () => {
+        if (!orch) {
+          dispatch({
+            type: "logs/push",
+            level: "warn",
+            message: "会话 always 需在运行中的 Orchestrator 上生效；可 --save 写配置规则",
+          });
+          return false;
+        }
+        return true;
+      };
+
+      switch (op) {
+        case "list":
+        case "ls":
+        case "show": {
+          const cfg = resolvePermissionRules();
+          lines.push("配置规则:", ...formatPermissionRules(cfg));
+          if (orch) {
+            lines.push(
+              "会话 always:",
+              ...formatPermissionRules(orch.permissions.sessionAlwaysRules()),
+            );
+          } else {
+            lines.push("会话 always: (无活动编排)");
+          }
+          break;
+        }
+        case "clear": {
+          if (save) {
+            replacePermissionRules(emptyPermissionRules());
+            lines.push("✅ 已清空配置 permissionRules");
+          }
+          if (orch) {
+            orch.permissions.clearSessionRules();
+            lines.push("✅ 已清空会话 always");
+          } else if (!save) {
+            lines.push("用法: /always clear · /always clear --save");
+          }
+          break;
+        }
+        case "tool":
+        case "tools": {
+          if (values.length === 0) {
+            lines.push("用法: /always tool <name...> [--save]");
+            break;
+          }
+          for (const t of values) orch?.permissions.rememberTool(t);
+          if (save) {
+            savePermissionRules({ alwaysAllowTools: values });
+            lines.push(`✅ 配置 always tools += ${values.join(", ")}`);
+          } else if (ensureOrchSession()) {
+            lines.push(`✅ 会话 always tools += ${values.join(", ")}`);
+          }
+          break;
+        }
+        case "path":
+        case "paths": {
+          if (values.length === 0) {
+            lines.push("用法: /always path <prefix...> [--save]");
+            break;
+          }
+          for (const p of values) orch?.permissions.rememberPath(p);
+          if (save) {
+            savePermissionRules({ alwaysAllowPaths: values });
+            lines.push(`✅ 配置 always paths += ${values.join(", ")}`);
+          } else if (ensureOrchSession()) {
+            lines.push(`✅ 会话 always paths += ${values.join(", ")}`);
+          }
+          break;
+        }
+        case "cmd":
+        case "command":
+        case "commands": {
+          if (values.length === 0) {
+            lines.push("用法: /always cmd <name...> [--save]");
+            break;
+          }
+          for (const c of values) orch?.permissions.rememberCommand(c);
+          if (save) {
+            savePermissionRules({ alwaysAllowCommands: values });
+            lines.push(`✅ 配置 always cmds += ${values.join(", ")}`);
+          } else if (ensureOrchSession()) {
+            lines.push(`✅ 会话 always cmds += ${values.join(", ")}`);
+          }
+          break;
+        }
+        case "deny-path":
+        case "deny-paths": {
+          if (values.length === 0) {
+            lines.push("用法: /always deny-path <prefix...> [--save]");
+            break;
+          }
+          if (save || !orch) {
+            savePermissionRules({ deniedPaths: values });
+            lines.push(`✅ 配置 denied paths += ${values.join(", ")}`);
+          }
+          if (orch) {
+            // setBaseRules 不碰 session always
+            orch.setPermissionRules(
+              mergePermissionRules(resolvePermissionRules(), {
+                deniedPaths: values,
+              }),
+            );
+            if (!save) {
+              lines.push(`✅ 运行时 denied paths += ${values.join(", ")}`);
+            }
+          }
+          break;
+        }
+        case "deny-cmd":
+        case "deny-cmds":
+        case "deny-command": {
+          if (values.length === 0) {
+            lines.push("用法: /always deny-cmd <name...> [--save]");
+            break;
+          }
+          if (save || !orch) {
+            savePermissionRules({ deniedCommands: values });
+            lines.push(`✅ 配置 denied cmds += ${values.join(", ")}`);
+          }
+          if (orch) {
+            orch.setPermissionRules(
+              mergePermissionRules(resolvePermissionRules(), {
+                deniedCommands: values,
+              }),
+            );
+            if (!save) {
+              lines.push(`✅ 运行时 denied cmds += ${values.join(", ")}`);
+            }
+          }
+          break;
+        }
+        default:
+          lines.push(
+            `未知 /always 子命令: ${op}`,
+            "用法: /always list|tool|path|cmd|clear|deny-path|deny-cmd [--save]",
+          );
+      }
+
+      for (const message of lines) {
+        dispatch({ type: "logs/push", level: "info", message });
+      }
+    },
+    [dispatch],
+  );
+
   const runEffect = useCallback(
     (effect: TuiEffect) => {
       switch (effect.type) {
@@ -507,7 +687,10 @@ export function App({
           void rerunLast();
           break;
         case "permission-answer":
-          answerPermission(effect.allow);
+          answerPermission(effect.allow, effect.remember);
+          break;
+        case "permission-always":
+          handleAlways(effect.op, effect.values, effect.save);
           break;
         case "stop-workflow":
           abortRef.current?.abort();
@@ -529,7 +712,16 @@ export function App({
           break;
       }
     },
-    [exit, runWorkflow, planAndRun, rerunLast, persistSession, answerPermission, dispatch],
+    [
+      exit,
+      runWorkflow,
+      planAndRun,
+      rerunLast,
+      persistSession,
+      answerPermission,
+      handleAlways,
+      dispatch,
+    ],
   );
 
   const slashMatches = useMemo(() => {
@@ -666,10 +858,14 @@ export function App({
       }
     }
 
-    // 快捷键：y/n 回答权限（输入框为空时）
+    // 快捷键：y/n/a 回答权限（输入框为空时）
     if (current.pendingPermission && !current.input && !current.slashOpen) {
       if (inputKey === "y" || inputKey === "Y") {
         answerPermission(true);
+        return;
+      }
+      if (inputKey === "a" || inputKey === "A") {
+        answerPermission(true, "tool");
         return;
       }
       if (inputKey === "n" || inputKey === "N") {
@@ -818,7 +1014,7 @@ export function App({
               : ""}
           </Text>
           <Text color="gray">
-            /allow · /deny · y/n · Esc 拒绝
+            /allow · /allow always · /deny · y/n · a=always · Esc 拒绝
           </Text>
         </Box>
       )}
