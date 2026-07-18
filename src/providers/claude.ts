@@ -6,7 +6,12 @@
  */
 
 import { BaseProvider } from "./base";
-import type { Message, ProviderConfig, ProviderResult } from "../types";
+import type {
+  Message,
+  ProviderConfig,
+  ProviderInvokeOptions,
+  ProviderResult,
+} from "../types";
 import { resolveBaseUrl } from "./defaults";
 
 interface AnthropicMessage {
@@ -48,7 +53,7 @@ export class ClaudeProvider extends BaseProvider {
 
   async invoke(
     messages: Message[],
-    options?: { temperature?: number; maxTokens?: number },
+    options?: ProviderInvokeOptions,
   ): Promise<ProviderResult> {
     const systemMessages: string[] = [];
     const chatMessages: AnthropicMessage[] = [];
@@ -110,7 +115,7 @@ export class ClaudeProvider extends BaseProvider {
 
   async invokeStream(
     messages: Message[],
-    options?: { temperature?: number; maxTokens?: number },
+    options?: ProviderInvokeOptions,
   ): Promise<AsyncIterable<string>> {
     const systemMessages: string[] = [];
     const chatMessages: AnthropicMessage[] = [];

@@ -9,7 +9,12 @@
  */
 
 import { OpenAIProvider, type OpenAIRequest } from "./openai";
-import type { Message, ProviderConfig, ProviderResult } from "../types";
+import type {
+  Message,
+  ProviderConfig,
+  ProviderInvokeOptions,
+  ProviderResult,
+} from "../types";
 import { resolveBaseUrl } from "./defaults";
 
 export type GrokSearchMode = "off" | "on" | "auto";
@@ -55,7 +60,7 @@ export class GrokProvider extends OpenAIProvider {
    */
   protected override buildRequestBody(
     messages: Message[],
-    options?: { temperature?: number; maxTokens?: number },
+    options?: ProviderInvokeOptions,
   ): OpenAIRequest {
     const body = super.buildRequestBody(messages, options);
     const search = this.pendingSearch ?? this.defaultSearch;

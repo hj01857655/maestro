@@ -10,12 +10,14 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { ProviderKind } from "../types";
+import type { OpenAIApiFormat, ProviderKind } from "../types";
 
 export interface ProviderEntry {
   baseUrl?: string;
   apiKey?: string;
   model?: string;
+  /** openai/grok：chat | responses */
+  apiFormat?: OpenAIApiFormat;
 }
 
 export interface MaestroConfig {
@@ -86,7 +88,7 @@ export function setProviderEntry(
   };
   // 清理空字段
   const e = cfg.providers[kind]!;
-  if (!e.baseUrl && !e.apiKey && !e.model) {
+  if (!e.baseUrl && !e.apiKey && !e.model && !e.apiFormat) {
     delete cfg.providers[kind];
   }
   saveConfig(cfg);
@@ -110,6 +112,9 @@ function stripEmpty(entry: ProviderEntry): ProviderEntry {
   if (entry.baseUrl?.trim()) out.baseUrl = entry.baseUrl.trim();
   if (entry.apiKey?.trim()) out.apiKey = entry.apiKey.trim();
   if (entry.model?.trim()) out.model = entry.model.trim();
+  if (entry.apiFormat === "chat" || entry.apiFormat === "responses") {
+    out.apiFormat = entry.apiFormat;
+  }
   return out;
 }
 

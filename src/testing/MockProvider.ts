@@ -5,7 +5,12 @@
  */
 
 import { BaseProvider } from "../providers/base";
-import type { Message, ProviderConfig, ProviderResult } from "../types";
+import type {
+  Message,
+  ProviderConfig,
+  ProviderInvokeOptions,
+  ProviderResult,
+} from "../types";
 
 export class MockProvider extends BaseProvider {
   private delayMs: number;
@@ -31,7 +36,7 @@ export class MockProvider extends BaseProvider {
 
   async invoke(
     messages: Message[],
-    _options?: { temperature?: number; maxTokens?: number },
+    _options?: ProviderInvokeOptions,
   ): Promise<ProviderResult> {
     // 模拟网络延迟
     await new Promise((r) => setTimeout(r, this.delayMs));
@@ -61,7 +66,7 @@ User: ${userMsg.slice(0, 60)}...
 
   async invokeStream(
     messages: Message[],
-    options?: { temperature?: number; maxTokens?: number },
+    options?: ProviderInvokeOptions,
   ): Promise<AsyncIterable<string>> {
     const result = await this.invoke(messages, options);
     const text = result.content;

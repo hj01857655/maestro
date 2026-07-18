@@ -2,13 +2,14 @@
  * Provider 工厂 — 统一构造，填默认 baseUrl / model / apiKey。
  */
 
-import type { ProviderConfig, ProviderKind } from "../types";
+import type { OpenAIApiFormat, ProviderConfig, ProviderKind } from "../types";
 import { BaseProvider } from "./base";
 import { ClaudeProvider } from "./claude";
 import { OpenAIProvider } from "./openai";
 import { GeminiProvider } from "./gemini";
 import { GrokProvider } from "./grok";
 import {
+  resolveApiFormatWithConfig as resolveApiFormat,
   resolveApiKeyWithConfig as resolveApiKey,
   resolveBaseUrlWithConfig as resolveBaseUrl,
   resolveModelWithConfig as resolveModel,
@@ -25,6 +26,8 @@ export interface CreateProviderOptions {
   model?: string;
   /** 角色推荐 model（次于环境变量） */
   roleModel?: string;
+  /** openai/grok：chat | responses */
+  apiFormat?: OpenAIApiFormat | string;
   maxTokens?: number;
   temperature?: number;
   timeout?: number;
@@ -35,7 +38,7 @@ export function buildProviderConfig(
   kind: ProviderKind,
   opts: CreateProviderOptions = {},
 ): ProviderConfig {
-  return {
+  const config: ProviderConfig = {
     name: opts.name ?? kind,
     baseUrl: resolveBaseUrl(kind, opts.baseUrl),
     apiKey: resolveApiKey(kind, opts.apiKey),
@@ -45,6 +48,10 @@ export function buildProviderConfig(
     timeout: opts.timeout,
     extraHeaders: opts.extraHeaders,
   };
+  if (kind === "openai" || kind === "grok") {
+    config.apiFormat = resolveApiFormat(kind, opts.apiFormat);
+  }
+  return config;
 }
 
 export function createProvider(

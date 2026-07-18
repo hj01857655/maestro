@@ -29,21 +29,29 @@ describe("Provider defaults", () => {
     );
   });
 
-  it("createProvider 应填满默认字段", () => {
-    const p = createProvider("claude", { apiKey: "sk-test" });
+  it("createProvider 应填满默认字段（显式覆盖避免读用户 config）", () => {
+    const p = createProvider("claude", {
+      apiKey: "sk-test",
+      baseUrl: DEFAULT_BASE_URLS.claude,
+      model: "claude-sonnet-4-6",
+    });
     expect(p).toBeInstanceOf(ClaudeProvider);
     expect(p.config.baseUrl).toBe(DEFAULT_BASE_URLS.claude);
     expect(p.config.apiKey).toBe("sk-test");
-    expect(p.model).toBeTruthy();
+    expect(p.model).toBe("claude-sonnet-4-6");
   });
 
-  it("buildProviderConfig 尊重 roleModel", () => {
+  it("buildProviderConfig 显式 model 优先于 roleModel / 用户 config", () => {
     const cfg = buildProviderConfig("openai", {
       roleModel: "gpt-custom",
+      model: "gpt-custom",
       apiKey: "k",
+      baseUrl: DEFAULT_BASE_URLS.openai,
+      apiFormat: "chat",
     });
     expect(cfg.model).toBe("gpt-custom");
     expect(cfg.baseUrl).toBe(DEFAULT_BASE_URLS.openai);
+    expect(cfg.apiFormat).toBe("chat");
   });
 
   it("apiKeyEnvName 正确", () => {

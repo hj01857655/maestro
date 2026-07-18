@@ -3,13 +3,15 @@
  * 显式 > 环境变量 > ~/.maestro/config.json > 内置默认
  */
 
-import type { ProviderKind } from "../types";
+import type { OpenAIApiFormat, ProviderKind } from "../types";
 import {
   DEFAULT_BASE_URLS,
   DEFAULT_MODELS,
+  apiFormatEnvName,
   apiKeyEnvName,
   baseUrlEnvName,
   modelEnvName,
+  normalizeApiFormat,
 } from "./defaults";
 import { getProviderEntry } from "../config/store";
 
@@ -50,5 +52,21 @@ export function resolveModelWithConfig(
     fromCfg ||
     roleDefault ||
     DEFAULT_MODELS[kind]
+  );
+}
+
+/** apiFormat：显式 > env > config file > chat */
+export function resolveApiFormatWithConfig(
+  kind: ProviderKind,
+  explicit?: string | OpenAIApiFormat,
+): OpenAIApiFormat {
+  if (kind !== "openai" && kind !== "grok") return "chat";
+  const fromEnv = process.env[apiFormatEnvName(kind)];
+  const fromCfg = getProviderEntry(kind).apiFormat;
+  return (
+    normalizeApiFormat(explicit) ??
+    normalizeApiFormat(fromEnv) ??
+    (fromCfg === "chat" || fromCfg === "responses" ? fromCfg : undefined) ??
+    "chat"
   );
 }

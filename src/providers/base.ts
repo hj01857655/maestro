@@ -7,7 +7,9 @@
 import type {
   Message,
   ProviderConfig,
+  ProviderInvokeOptions,
   ProviderResult,
+  ProviderStreamEvent,
   ProviderKind,
 } from "../types";
 
@@ -29,16 +31,33 @@ export abstract class BaseProvider {
   }
 
   /** 统一调用接口（完整响应） */
-  abstract invoke(messages: Message[], options?: {
-    temperature?: number;
-    maxTokens?: number;
-  }): Promise<ProviderResult>;
+  abstract invoke(
+    messages: Message[],
+    options?: ProviderInvokeOptions,
+  ): Promise<ProviderResult>;
 
-  /** 流式调用（可选实现） */
+  /** 流式调用（可选实现；仅文本 delta） */
   async invokeStream(
     _messages: Message[],
-    _options?: { temperature?: number; maxTokens?: number },
+    _options?: ProviderInvokeOptions,
   ): Promise<AsyncIterable<string>> {
     throw new Error(`${this.kind} provider 不支持流式调用`);
+  }
+
+  /**
+   * 结构化流式事件（可选）。
+   * 默认把 invokeStream 文本包装为 {type:text}，结束时发 {type:done}。
+   */
+  async invokeStreamEvents(
+    messages: Message[],
+    options?: ProviderInvokeOptions,
+  ): Promise<AsyncIterable<ProviderStreamEvent>> {
+    const stream = await this.invokeStream(messages, options);
+    return (async function* () {
+      for await (const text of stream) {
+        if (text) yield { type: "text" as const, text };
+      }
+      yield { type: "done" as const };
+    })();
   }
 }
