@@ -1,5 +1,8 @@
 /**
- * Maestro TUI 交互测试
+ * Maestro TUI 交互测试（Ink）
+ *
+ * 注：Windows 上 Bun + ink-testing-library 可能 panic；
+ * 纯逻辑见 slash-commands.test.ts。
  */
 
 import React from "react";
@@ -108,8 +111,8 @@ describe("TUI reducer", () => {
       type: "orchestrator/event",
       event: { type: "step:start", step: "research", agent: "researcher", attempt: 1 },
     });
-    expect(state.steps[0].status).toBe("running");
-    expect(state.steps[0].attempts).toBe(1);
+    expect(state.steps[0]!.status).toBe("running");
+    expect(state.steps[0]!.attempts).toBe(1);
 
     state = reduce(state, {
       type: "orchestrator/event",
@@ -121,8 +124,8 @@ describe("TUI reducer", () => {
         attempt: 1,
       },
     });
-    expect(state.steps[0].status).toBe("success");
-    expect(state.steps[0].summary).toBe("ok");
+    expect(state.steps[0]!.status).toBe("success");
+    expect(state.steps[0]!.summary).toBe("ok");
   });
 
   it("应该维护命令历史", () => {

@@ -42,12 +42,29 @@ export type TuiAction =
       sessionId: string;
       sessionName?: string;
     }
+  | {
+      type: "session/hydrate";
+      sessionId: string;
+      sessionName?: string;
+      workflowName?: string;
+      mock?: boolean;
+      steps?: StepUiState[];
+      logs?: Array<{
+        level: "info" | "success" | "error" | "warn";
+        message: string;
+        time?: string;
+      }>;
+      commandHistory?: string[];
+      statusLine?: string;
+    }
+  | { type: "workflow/reset" }
   | { type: "quit" };
 
 /** Effect — 由 reduce 产出，交给 effect runner 执行（异步/IO） */
 export type TuiEffect =
   | { type: "run-workflow"; path: string; mock: boolean }
   | { type: "plan-and-run"; request: string; mock: boolean; test?: boolean }
+  | { type: "rerun-last" }
   | { type: "stop-workflow" }
   | { type: "exit" }
   | { type: "none" };

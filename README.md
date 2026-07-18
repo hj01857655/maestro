@@ -98,14 +98,22 @@ bun run tui
 /help                              显示帮助
 /roles                             列出预置角色
 /providers                         查看 provider 配置
-/config                            配置路径提示
+/model [kind] [model]              查看/设置 provider 默认 model
+/config                            配置路径与会话目录
+/version                           版本与安装模式
+/doctor                            快速健康检查
+/cost                              本次运行 step 摘要
 /plan <需求> [--mock] [--test]     模板生成流水线并执行
 /run <workflow.yaml> [--mock]      运行工作流
+/rerun                             重跑当前会话上次工作流
 /show [step]                       查看 step 完整输出
 /show close                        关闭预览
 /stop                              取消当前工作流
-/clear                             清空日志
-/session                          当前会话信息
+/clear [--all]                     清空日志（--all 重置工作流面板）
+/session                           当前会话信息
+/sessions [--all] [query]          列出会话
+/resume [id|query|latest]          加载历史会话
+/export [path]                     导出当前会话摘要 JSON
 /quit                              退出
 ```
 
@@ -118,6 +126,9 @@ bun run tui
 ```text
 /run src/examples/demo-mock.yaml --mock
 /plan 实现用户登录 --mock
+/sessions
+/resume latest
+/rerun
 ```
 
 ### CLI

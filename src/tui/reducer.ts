@@ -271,6 +271,49 @@ export function reduce(state: TuiState, action: TuiAction): TuiState {
         sessionId: action.sessionId,
         sessionName: action.sessionName ?? state.sessionName,
       };
+    case "session/hydrate": {
+      const logs =
+        action.logs?.map((l) =>
+          makeLog(l.level, l.message),
+        ) ?? state.logs;
+      // 保留 makeLog 生成的 time；若带 time 再覆盖
+      const withTime =
+        action.logs?.map((l, i) => ({
+          ...logs[i]!,
+          time: l.time ?? logs[i]!.time,
+        })) ?? state.logs;
+      return {
+        ...state,
+        mode: "idle",
+        sessionId: action.sessionId,
+        sessionName: action.sessionName,
+        workflowName: action.workflowName ?? "",
+        mock: action.mock ?? false,
+        steps: action.steps ?? [],
+        logs: withTime.slice(-200),
+        commandHistory: action.commandHistory ?? state.commandHistory,
+        inspectStep: null,
+        showHelp: false,
+        startedAt: undefined,
+        completedAt: undefined,
+        statusLine:
+          action.statusLine ??
+          `已加载会话 ${action.sessionId}${action.sessionName ? ` "${action.sessionName}"` : ""}`,
+      };
+    }
+    case "workflow/reset":
+      return {
+        ...state,
+        mode: "idle",
+        workflowName: "",
+        steps: [],
+        stepDeps: {},
+        startedAt: undefined,
+        completedAt: undefined,
+        inspectStep: null,
+        showHelp: false,
+        statusLine: "已重置 · 输入 /help",
+      };
     case "quit":
       return state;
     default:

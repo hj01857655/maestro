@@ -46,6 +46,7 @@ import { BUILTIN_ROLES } from "../roles";
 import type { ProviderKind, WorkflowConfig } from "../types";
 import {
   createSession,
+  loadSession,
   saveSession,
   touchSession,
   type SessionRecord,
@@ -375,6 +376,31 @@ export function App({ bootstrap, session: initialSession }: AppProps = {}) {
     [dispatch, executeConfig],
   );
 
+  const rerunLast = useCallback(async () => {
+    const sid = sessionRef.current?.id ?? stateRef.current.sessionId;
+    const s = sid ? loadSession(sid) : sessionRef.current;
+    if (!s?.lastWorkflow) {
+      dispatch({
+        type: "logs/push",
+        level: "error",
+        message: "无上次工作流可 rerun · 先 /plan 或 /run",
+      });
+      return;
+    }
+    // hydrate 后 sessionRef 可能仍是旧对象，对齐 id
+    if (sessionRef.current?.id !== s.id) {
+      sessionRef.current = s;
+    }
+    const request = s.lastRequest ?? "rerun";
+    const isMock = Boolean(s.mock);
+    dispatch({
+      type: "logs/push",
+      level: "info",
+      message: `↩ rerun ${s.lastWorkflow.name} · mock=${isMock}`,
+    });
+    await executeConfig(s.lastWorkflow, isMock, request);
+  }, [dispatch, executeConfig]);
+
   const runEffect = useCallback(
     (effect: TuiEffect) => {
       switch (effect.type) {
@@ -383,6 +409,9 @@ export function App({ bootstrap, session: initialSession }: AppProps = {}) {
           break;
         case "plan-and-run":
           void planAndRun(effect.request, effect.mock, effect.test);
+          break;
+        case "rerun-last":
+          void rerunLast();
           break;
         case "stop-workflow":
           abortRef.current?.abort();
@@ -398,7 +427,7 @@ export function App({ bootstrap, session: initialSession }: AppProps = {}) {
           break;
       }
     },
-    [exit, runWorkflow, planAndRun, persistSession],
+    [exit, runWorkflow, planAndRun, rerunLast, persistSession],
   );
 
   const slashMatches = useMemo(() => {
@@ -469,10 +498,13 @@ export function App({ bootstrap, session: initialSession }: AppProps = {}) {
         });
 
         let next = current;
+        const applied: TuiAction[] = [];
         if (result.kind === "actions") {
+          applied.push(...result.actions);
           next = result.actions.reduce((acc, a) => reduce(acc, a), next);
         } else if (result.kind === "effect") {
           if (result.actions) {
+            applied.push(...result.actions);
             next = result.actions.reduce((acc, a) => reduce(acc, a), next);
           }
           queueMicrotask(() => runEffect(result.effect));
@@ -483,6 +515,19 @@ export function App({ bootstrap, session: initialSession }: AppProps = {}) {
             message: result.message,
           });
         }
+
+        // /resume 等 hydrate 后，把 sessionRef 切到目标会话（否则 /rerun 仍写旧会话）
+        const hydrate = applied.find((a) => a.type === "session/hydrate");
+        if (hydrate && hydrate.type === "session/hydrate") {
+          const loaded = loadSession(hydrate.sessionId);
+          if (loaded) {
+            sessionRef.current = touchSession(loaded, {
+              status: "active",
+              kind: "tui",
+            });
+          }
+        }
+
         return next;
       });
     },
